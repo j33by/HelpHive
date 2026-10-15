@@ -1,0 +1,47 @@
+# Codemagic: connect the repo, pick "codemagic.yaml", run the "helphive-android" workflow.
+# In Codemagic > Environment variables, make a group called "helphive" with:
+#   SUPABASE_URL        https://<project-ref>.supabase.co
+#   SUPABASE_ANON_KEY   the anon / publishable key (public by design)
+#   API_URL             https://<your-service>.onrender.com
+workflows:
+  helphive-android:
+    name: HelpHive (Android APK)
+    instance_type: linux_x2
+    max_build_duration: 30
+    environment:
+      flutter: stable
+      java: 17
+      groups:
+        - helphive
+    scripts:
+      - name: Create the Android project and patch it
+        script: |
+          cd app
+          if [ ! -d android ]; then
+            cp -r lib /tmp/hh_lib && cp pubspec.yaml /tmp/hh_pubspec.yaml
+            flutter create --platforms=android --org io.helphive --project-name helphive .
+            rm -rf lib && cp -r /tmp/hh_lib lib && cp /tmp/hh_pubspec.yaml pubspec.yaml
+            rm -f test/widget_test.dart
+          fi
+          python3 tool/patch_android.py
+      - name: Get packages
+        script: |
+          cd app
+          flutter pub get
+      - name: Generate launcher icons
+        script: |
+          cd app
+          dart run flutter_launcher_icons
+      - name: Static check
+        script: |
+          cd app
+          flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Build release APK
+        script: |
+          cd app
+          flutter build apk --release \
+            --dart-define=SUPABASE_URL=$SUPABASE_URL \
+            --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
+            --dart-define=API_URL=$API_URL
+    artifacts:
+      - app/build/app/outputs/flutter-apk/*.apk

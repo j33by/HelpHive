@@ -1,0 +1,22 @@
+# Render blueprint: New + > Blueprint, point it at this repo.
+# Secrets are left blank on purpose; fill them in on the Render dashboard.
+services:
+  - type: web
+    name: helphive-api
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: DATABASE_URL            # Neon connection string (pooled, sslmode=require)
+        sync: false
+      - key: SUPABASE_URL            # https://<project-ref>.supabase.co
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET     # only if your project still uses the legacy HS256 secret
+        sync: false
