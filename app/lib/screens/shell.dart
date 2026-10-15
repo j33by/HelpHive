@@ -56,18 +56,13 @@ class _ShellState extends State<Shell> {
               MessagesTab(),
               ProfileScreen(),
             ]),
-            bottomNavigationBar: Container(
-              decoration: BoxDecoration(
-                color: C.surface,
-                border: const Border(top: BorderSide(color: C.sunken, width: 1)),
-                boxShadow: [
-                  BoxShadow(color: C.shadowDark.withValues(alpha: .35), blurRadius: 14, offset: const Offset(0, -3)),
-                ],
-              ),
-              child: SafeArea(
-                top: false,
-                child: SizedBox(
-                  height: 64,
+            bottomNavigationBar: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                child: Container(
+                  height: 70,
+                  decoration: clayDeco(radius: 35, depth: .8),
                   child: Row(children: [
                     for (var n = 0; n < _tabs.length; n++)
                       Expanded(
@@ -102,32 +97,35 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) => Press(
         onTap: onTap,
         scale: .92,
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Stack(clipBehavior: Clip.none, children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-              width: 58,
-              height: 32,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: selected ? C.honeyPale : Colors.transparent,
-                borderRadius: BorderRadius.circular(16),
+        child: Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Stack(clipBehavior: Clip.none, children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOut,
+                width: 46,
+                height: 30,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected ? C.honey : Colors.transparent,
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: HIcon(icon, size: 22, color: selected ? C.ink : C.inkSoft),
               ),
-              child: HIcon(icon, size: 23, color: selected ? C.ink : C.inkSoft),
+              if (badge > 0) Positioned(right: -2, top: -5, child: CountDot(badge)),
+            ]),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 10.5,
+                height: 1.1,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                color: selected ? C.ink : C.inkSoft,
+              ),
             ),
-            if (badge > 0) Positioned(right: 4, top: -3, child: CountDot(badge)),
           ]),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11.5,
-              height: 1.1,
-              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
-              color: selected ? C.ink : C.inkSoft,
-            ),
-          ),
-        ]),
+        ),
       );
 }
