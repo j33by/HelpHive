@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'app_state.dart';
 import 'config.dart';
+import 'platform.dart';
 import 'screens/auth.dart';
 import 'screens/shell.dart';
 import 'services/secure_store.dart';
@@ -11,13 +13,15 @@ import 'theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.dark,
-    systemNavigationBarColor: C.bg,
-    systemNavigationBarIconBrightness: Brightness.dark,
-  ));
-  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+  if (!isDesktop) {
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarColor: C.bg,
+      systemNavigationBarIconBrightness: Brightness.dark,
+    ));
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp, DeviceOrientation.portraitDown]);
+  }
 
   if (Config.ready) {
     await Supabase.initialize(
@@ -32,6 +36,18 @@ Future<void> main() async {
   runApp(const HelpHiveApp());
 }
 
+/// Lets a mouse or trackpad drag-scroll and pull-to-refresh like a finger does.
+class _AnyDeviceScroll extends MaterialScrollBehavior {
+  const _AnyDeviceScroll();
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.stylus,
+        PointerDeviceKind.trackpad,
+      };
+}
+
 class HelpHiveApp extends StatelessWidget {
   const HelpHiveApp({super.key});
   @override
@@ -39,6 +55,7 @@ class HelpHiveApp extends StatelessWidget {
         title: 'HelpHive',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
+        scrollBehavior: const _AnyDeviceScroll(),
         home: Config.ready ? const Gate() : const SetupNeeded(),
       );
 }

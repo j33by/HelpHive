@@ -7,6 +7,7 @@ import '../widgets/clay.dart';
 import '../widgets/friend_actions.dart';
 import '../widgets/post_card.dart';
 import 'profile.dart';
+import '../layout.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -132,7 +133,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                     return ClayCard(
                                       padding: const EdgeInsets.all(12),
                                       radius: 22,
-                                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: p.id))),
+                                      onTap: () => Navigator.push(context, appRoute(ProfileScreen(userId: p.id))),
                                       child: Row(children: [
                                         Avatar(url: p.avatarUrl, name: p.display, size: 48),
                                         const SizedBox(width: 12),

@@ -9,6 +9,7 @@ import '../services/data.dart';
 import '../theme.dart';
 import 'clay.dart';
 import 'reactions.dart';
+import '../layout.dart';
 
 class CategoryTag extends StatelessWidget {
   const CategoryTag(this.category, {super.key});
@@ -75,7 +76,7 @@ class _PostCardState extends State<PostCard> {
 
   void _openDetail() {
     if (widget.detail) return;
-    Navigator.push<Object?>(context, MaterialPageRoute(builder: (_) => PostDetailScreen(post: p))).then((r) {
+    Navigator.push<Object?>(context, appRoute(PostDetailScreen(post: p))).then((r) {
       if (r == 'deleted') {
         widget.onDeleted?.call();
       } else if (mounted) {
@@ -85,13 +86,13 @@ class _PostCardState extends State<PostCard> {
   }
 
   void _openProfile() {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: p.authorId)));
+    Navigator.push(context, appRoute(ProfileScreen(userId: p.authorId)));
   }
 
   Future<void> _menu(String v) async {
     switch (v) {
       case 'edit':
-        final changed = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => ComposeScreen(editing: p)));
+        final changed = await Navigator.push<bool>(context, appRoute(ComposeScreen(editing: p)));
         if (changed == true) {
           final fresh = await Data.post(p.id);
           if (fresh != null && mounted) {

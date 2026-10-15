@@ -7,6 +7,7 @@ import '../services/data.dart';
 import '../theme.dart';
 import '../widgets/clay.dart';
 import 'chat.dart';
+import '../layout.dart';
 
 class MessagesTab extends StatefulWidget {
   const MessagesTab({super.key});
@@ -23,6 +24,11 @@ class _MessagesTabState extends State<MessagesTab> {
   String? _error;
   Timer? _debounce;
   Timer? _poll;
+
+  // desktop split view: the conversation shown next to the list
+  bool _split = false;
+  String? _openId;
+  UserLite? _openUser;
 
   @override
   void initState() {
@@ -97,7 +103,17 @@ class _MessagesTabState extends State<MessagesTab> {
     try {
       final convId = id ?? await Api.openConversation(user.id);
       if (!mounted) return;
-      await Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversationId: convId, other: user)));
+      if (_split) {
+        setState(() {
+          _openId = convId;
+          _openUser = user;
+          _search.clear();
+          _found = [];
+        });
+        _load(quiet: true);
+        return;
+      }
+      await Navigator.push(context, appRoute(ChatScreen(conversationId: convId, other: user)));
       _search.clear();
       setState(() => _found = []);
       _load(quiet: true);
@@ -108,6 +124,26 @@ class _MessagesTabState extends State<MessagesTab> {
 
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, box) {
+      final split = box.maxWidth >= Bp.split;
+      if (split != _split) {
+        // not setState: this only changes how the next tap behaves
+        _split = split;
+      }
+      if (!split) return ContentColumn(maxWidth: 720, child: _list());
+      return Row(children: [
+        SizedBox(width: 360, child: _list()),
+        const VerticalDivider(width: 1, thickness: 1, color: C.sunken),
+        Expanded(
+          child: _openId == null || _openUser == null
+              ? const Empty(icon: 'chat', title: 'Pick a conversation', subtitle: 'Choose a chat on the left, or search for someone to say hello.')
+              : ChatScreen(key: ValueKey(_openId), conversationId: _openId!, other: _openUser!, embedded: true),
+        ),
+      ]);
+    });
+  }
+
+  Widget _list() {
     final q = _search.text.trim();
     return SafeArea(
       bottom: false,
@@ -172,6 +208,7 @@ class _MessagesTabState extends State<MessagesTab> {
                                     final preview = c.lastDeleted ? 'Message unsent' : '${c.lastMine ? 'You: ' : ''}${c.lastBody}';
                                     return ClayCard(
                                       radius: 22,
+                                      color: _split && c.id == _openId ? C.honeyPale : C.surface,
                                       padding: const EdgeInsets.all(12),
                                       onTap: () => _openChat(c.user, id: c.id),
                                       child: Row(children: [

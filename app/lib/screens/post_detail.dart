@@ -7,6 +7,7 @@ import '../widgets/clay.dart';
 import '../widgets/post_card.dart';
 import '../widgets/reactions.dart';
 import 'profile.dart';
+import '../layout.dart';
 
 class PostDetailScreen extends StatefulWidget {
   const PostDetailScreen({super.key, this.post, this.postId}) : assert(post != null || postId != null);
@@ -309,7 +310,7 @@ class _CommentTile extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Press(
-          onTap: c.user.id.isEmpty ? null : () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: c.user.id))),
+          onTap: c.user.id.isEmpty ? null : () => Navigator.push(context, appRoute(ProfileScreen(userId: c.user.id))),
           child: Avatar(url: c.user.avatarUrl, name: c.user.display, size: small ? 30 : 36),
         ),
         const SizedBox(width: 10),

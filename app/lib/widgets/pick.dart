@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../platform.dart';
 import '../theme.dart';
 import 'clay.dart';
 
@@ -10,8 +11,9 @@ class Picked {
   final String ext;
 }
 
-/// Asks camera or gallery, shrinks the picture, returns the bytes.
+/// Asks camera or gallery (gallery only on desktop), shrinks the picture, returns the bytes.
 Future<Picked?> pickImage(BuildContext context, {int maxWidth = 1600}) async {
+  if (isDesktop) return _read(context, ImageSource.gallery, maxWidth);
   final source = await showModalBottomSheet<ImageSource>(
     context: context,
     builder: (ctx) => SafeArea(
@@ -27,7 +29,11 @@ Future<Picked?> pickImage(BuildContext context, {int maxWidth = 1600}) async {
       ),
     ),
   );
-  if (source == null) return null;
+  if (source == null || !context.mounted) return null;
+  return _read(context, source, maxWidth);
+}
+
+Future<Picked?> _read(BuildContext context, ImageSource source, int maxWidth) async {
   try {
     final x = await ImagePicker().pickImage(source: source, maxWidth: maxWidth.toDouble(), imageQuality: 85);
     if (x == null) return null;

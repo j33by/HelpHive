@@ -3,17 +3,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../models.dart';
+import '../platform.dart';
 import '../services/api.dart';
 import '../services/data.dart';
 import '../theme.dart';
 import '../widgets/clay.dart';
 import '../widgets/reactions.dart';
 import 'profile.dart';
+import '../layout.dart';
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, required this.conversationId, required this.other});
+  const ChatScreen({super.key, required this.conversationId, required this.other, this.embedded = false});
   final String conversationId;
   final UserLite other;
+
+  /// Shown inside the chats tab next to the list (desktop), so no back button.
+  final bool embedded;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -254,13 +259,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 68,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 12),
-          child: Center(child: ClayIconButton(icon: 'back', size: 40, onTap: () => Navigator.pop(context))),
-        ),
-        titleSpacing: 12,
+        automaticallyImplyLeading: false,
+        leading: widget.embedded
+            ? null
+            : Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: Center(child: ClayIconButton(icon: 'back', size: 40, onTap: () => Navigator.pop(context))),
+              ),
+        titleSpacing: widget.embedded ? 20 : 12,
         title: Press(
-          onTap: o.id.isEmpty ? null : () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: o.id))),
+          onTap: o.id.isEmpty ? null : () => Navigator.push(context, appRoute(ProfileScreen(userId: o.id))),
           child: Row(children: [
             Avatar(url: o.avatarUrl, name: o.display, size: 40),
             const SizedBox(width: 12),
@@ -364,7 +372,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ]),
               ),
             Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              Expanded(child: ClayField(controller: _input, hint: 'Message', maxLines: 5, minLines: 1, maxLength: 2000)),
+              Expanded(
+                child: Focus(
+                  canRequestFocus: false,
+                  // desktop: Enter sends, Shift+Enter starts a new line
+                  onKeyEvent: (node, e) {
+                    if (isDesktop && e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.enter && !HardwareKeyboard.instance.isShiftPressed) {
+                      if (can) _send();
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: ClayField(controller: _input, hint: 'Message', maxLines: 5, minLines: 1, maxLength: 2000),
+                ),
+              ),
               const SizedBox(width: 10),
               ClayIconButton(icon: can ? 'send_fill' : 'send', size: 50, bg: can ? C.honey : C.surface, onTap: can ? _send : null),
             ]),

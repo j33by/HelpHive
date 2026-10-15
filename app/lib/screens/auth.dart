@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config.dart';
+import '../platform.dart';
 import '../services/data.dart';
+import '../services/desktop_oauth.dart';
 import '../theme.dart';
 import '../widgets/clay.dart';
 
@@ -40,7 +42,7 @@ class _AuthScreenState extends State<AuthScreen> {
           email: email,
           password: _pass.text,
           data: {'full_name': _name.text.trim()},
-          emailRedirectTo: Config.authRedirect,
+          emailRedirectTo: Config.emailRedirect,
         );
         if (res.session == null && mounted) {
           toast(context, 'Almost there. Check $email for a confirmation link.');
@@ -59,15 +61,19 @@ class _AuthScreenState extends State<AuthScreen> {
   Future<void> _google() async {
     setState(() => _googleBusy = true);
     try {
-      await sb.auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: Config.authRedirect,
-        authScreenLaunchMode: LaunchMode.externalApplication,
-      );
+      if (isDesktop) {
+        await signInWithGoogleDesktop(sb);
+      } else {
+        await sb.auth.signInWithOAuth(
+          OAuthProvider.google,
+          redirectTo: Config.authRedirect,
+          authScreenLaunchMode: LaunchMode.externalApplication,
+        );
+      }
     } catch (e) {
       if (mounted) toast(context, friendly(e));
     } finally {
-      // the session arrives through the deep link; just release the button
+      // the session arrives through the deep link (phones) or the loopback page (desktop)
       if (mounted) setState(() => _googleBusy = false);
     }
   }
@@ -79,7 +85,7 @@ class _AuthScreenState extends State<AuthScreen> {
       return;
     }
     try {
-      await sb.auth.resetPasswordForEmail(email, redirectTo: Config.authRedirect);
+      await sb.auth.resetPasswordForEmail(email, redirectTo: Config.emailRedirect);
       if (mounted) toast(context, 'If that email has an account, a reset link is on its way.');
     } catch (e) {
       if (mounted) toast(context, friendly(e));

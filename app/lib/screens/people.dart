@@ -6,6 +6,7 @@ import '../theme.dart';
 import '../widgets/clay.dart';
 import '../widgets/friend_actions.dart';
 import 'profile.dart';
+import '../layout.dart';
 
 class PeopleTab extends StatefulWidget {
   const PeopleTab({super.key});
@@ -107,9 +108,11 @@ class _PeopleTabState extends State<PeopleTab> {
       bottom: false,
       child: LayoutBuilder(builder: (context, box) {
         const hPad = 20.0, gap = 16.0;
-        final cardW = (box.maxWidth - hPad * 2 - gap) / 2;
+        // 2 columns on a phone, up to 4 on a wide window
+        final cols = box.maxWidth >= 900 ? 4 : (box.maxWidth >= 640 ? 3 : 2);
+        final cardW = (box.maxWidth - hPad * 2 - gap * (cols - 1)) / cols;
         final scale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.6);
-        // two columns on every screen; the card height follows its width and the text size
+        // the card height follows its width and the text size
         final double extent = ((cardW * 1.05 + 74).clamp(210.0, 300.0) + (scale - 1) * 70).toDouble();
         return RefreshIndicator(
           color: C.honeyDeep,
@@ -168,7 +171,7 @@ class _PeopleTabState extends State<PeopleTab> {
                   padding: const EdgeInsets.fromLTRB(hPad, 8, hPad, 24),
                   sliver: SliverGrid.builder(
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
+                      crossAxisCount: cols,
                       mainAxisSpacing: gap,
                       crossAxisSpacing: gap,
                       mainAxisExtent: extent,
@@ -212,7 +215,7 @@ class _PersonCard extends StatelessWidget {
     final p = person;
     return ClayCard(
       padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: p.id))),
+      onTap: () => Navigator.push(context, appRoute(ProfileScreen(userId: p.id))),
       child: Column(children: [
         Avatar(url: p.avatarUrl, name: p.display, size: 68),
         const SizedBox(height: 10),

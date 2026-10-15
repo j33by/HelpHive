@@ -11,6 +11,7 @@ import '../widgets/post_card.dart';
 import '../widgets/reactions.dart';
 import 'chat.dart';
 import 'edit_profile.dart';
+import '../layout.dart';
 
 /// [userId] null means "me" (the profile tab). Pushed for anyone else.
 class ProfileScreen extends StatefulWidget {
@@ -102,7 +103,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _edit() async {
-    final saved = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => EditProfileScreen(profile: _profile!)));
+    final saved = await Navigator.push<bool>(context, appRoute(EditProfileScreen(profile: _profile!)));
     if (saved == true) _load(quiet: true);
   }
 
@@ -111,7 +112,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       final id = await Api.openConversation(p.id);
       if (!mounted) return;
-      Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversationId: id, other: UserLite(id: p.id, username: p.username, fullName: p.fullName, avatarUrl: p.avatarUrl))));
+      Navigator.push(context, appRoute(ChatScreen(conversationId: id, other: UserLite(id: p.id, username: p.username, fullName: p.fullName, avatarUrl: p.avatarUrl))));
     } catch (e) {
       if (mounted) toast(context, friendly(e));
     }
@@ -169,7 +170,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget build(BuildContext context) {
     final p = _profile;
     return Scaffold(
-      body: _loading
+      body: ContentColumn(
+        maxWidth: 720,
+        child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null && p == null
               ? SafeArea(child: Stack(children: [Failed(message: _error!, onRetry: _load), if (!_isTab) _backButton()]))
@@ -223,6 +226,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ],
                   ),
                 ),
+      ),
     );
   }
 

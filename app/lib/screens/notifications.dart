@@ -8,6 +8,7 @@ import '../widgets/clay.dart';
 import '../widgets/reactions.dart';
 import 'post_detail.dart';
 import 'profile.dart';
+import '../layout.dart';
 
 class NotificationsTab extends StatefulWidget {
   const NotificationsTab({super.key});
@@ -126,9 +127,9 @@ class _NotificationsTabState extends State<NotificationsTab> {
       setState(() {});
     }
     if (n.type.startsWith('friend') && n.actor.id.isNotEmpty) {
-      Navigator.push(context, MaterialPageRoute(builder: (_) => ProfileScreen(userId: n.actor.id)));
+      Navigator.push(context, appRoute(ProfileScreen(userId: n.actor.id)));
     } else if (n.postId != null) {
-      Navigator.push(context, MaterialPageRoute(builder: (_) => PostDetailScreen(postId: n.postId)));
+      Navigator.push(context, appRoute(PostDetailScreen(postId: n.postId)));
     }
   }
 

@@ -7,6 +7,7 @@ import '../widgets/clay.dart';
 import '../widgets/post_card.dart';
 import 'compose.dart';
 import 'search.dart';
+import '../layout.dart';
 
 class FeedTab extends StatefulWidget {
   const FeedTab({super.key});
@@ -81,7 +82,7 @@ class _FeedTabState extends State<FeedTab> {
   }
 
   Future<void> _compose() async {
-    final posted = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => const ComposeScreen()));
+    final posted = await Navigator.push<bool>(context, appRoute(const ComposeScreen()));
     if (posted == true) {
       _load();
       AppState.I.refreshMe();
@@ -122,7 +123,7 @@ class _FeedTabState extends State<FeedTab> {
                   ]),
                   const SizedBox(height: 14),
                   Press(
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen())),
+                    onTap: () => Navigator.push(context, appRoute(const SearchScreen())),
                     child: Container(
                       height: 52,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
