@@ -56,22 +56,29 @@ class _ShellState extends State<Shell> {
               MessagesTab(),
               ProfileScreen(),
             ]),
-            bottomNavigationBar: SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
-                child: Container(
-                  height: 68,
-                  decoration: clayDeco(radius: 34, depth: .8),
+            bottomNavigationBar: Container(
+              decoration: BoxDecoration(
+                color: C.surface,
+                border: const Border(top: BorderSide(color: C.sunken, width: 1)),
+                boxShadow: [
+                  BoxShadow(color: C.shadowDark.withValues(alpha: .35), blurRadius: 14, offset: const Offset(0, -3)),
+                ],
+              ),
+              child: SafeArea(
+                top: false,
+                child: SizedBox(
+                  height: 64,
                   child: Row(children: [
                     for (var n = 0; n < _tabs.length; n++)
-                      Expanded(child: _NavItem(
-                        icon: i == n ? _tabs[n].$2 : _tabs[n].$1,
-                        label: _tabs[n].$3,
-                        selected: i == n,
-                        badge: n == 2 ? _app.notifBadge : (n == 3 ? _app.msgBadge : 0),
-                        onTap: () => _app.tab.value = n,
-                      )),
+                      Expanded(
+                        child: _NavItem(
+                          icon: i == n ? _tabs[n].$2 : _tabs[n].$1,
+                          label: _tabs[n].$3,
+                          selected: i == n,
+                          badge: n == 2 ? _app.notifBadge : (n == 3 ? _app.msgBadge : 0),
+                          onTap: () => _app.tab.value = n,
+                        ),
+                      ),
                   ]),
                 ),
               ),
@@ -90,25 +97,37 @@ class _NavItem extends StatelessWidget {
   final bool selected;
   final int badge;
   final VoidCallback onTap;
+
   @override
   Widget build(BuildContext context) => Press(
         onTap: onTap,
-        child: Center(
-          child: Stack(clipBehavior: Clip.none, children: [
+        scale: .92,
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Stack(clipBehavior: Clip.none, children: [
             AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: EdgeInsets.symmetric(horizontal: selected ? 16 : 10, vertical: 9),
-              decoration: BoxDecoration(color: selected ? C.honey : Colors.transparent, borderRadius: BorderRadius.circular(24)),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                HIcon(icon, size: 24, color: selected ? C.ink : C.inkSoft),
-                if (selected) ...[
-                  const SizedBox(width: 6),
-                  Text(label, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5)),
-                ],
-              ]),
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              width: 58,
+              height: 32,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: selected ? C.honeyPale : Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: HIcon(icon, size: 23, color: selected ? C.ink : C.inkSoft),
             ),
-            if (badge > 0) Positioned(right: -2, top: -4, child: CountDot(badge)),
+            if (badge > 0) Positioned(right: 4, top: -3, child: CountDot(badge)),
           ]),
-        ),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.1,
+              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              color: selected ? C.ink : C.inkSoft,
+            ),
+          ),
+        ]),
       );
 }

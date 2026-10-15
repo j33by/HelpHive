@@ -132,6 +132,70 @@ class _NotificationsTabState extends State<NotificationsTab> {
     }
   }
 
+  Future<void> _delete(Notif n) async {
+    final i = _items.indexWhere((x) => x.id == n.id);
+    if (i < 0) return;
+    setState(() => _items.removeAt(i));
+    try {
+      await Api.deleteNotification(n.id);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _items.insert(i.clamp(0, _items.length), n));
+      toast(context, friendly(e));
+    }
+  }
+
+  Future<void> _clearAll() async {
+    final ok = await confirm(
+      context,
+      title: 'Clear all alerts?',
+      body: 'Every notification will be removed for good.',
+      yes: 'Clear all',
+      danger: true,
+    );
+    if (!ok || !mounted) return;
+    final backup = List<Notif>.of(_items);
+    setState(() {
+      _items.clear();
+      _more = false;
+    });
+    AppState.I.setBadges(notifications: 0);
+    try {
+      await Api.deleteAllNotifications();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _items.addAll(backup));
+      toast(context, friendly(e));
+    }
+  }
+
+  Future<void> _menu(Notif n) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(width: 36, height: 4, decoration: BoxDecoration(color: C.sunken, borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 16),
+            if (!n.read) ...[
+              ClayButton(label: 'Mark as read', icon: 'check', tone: ClayTone.soft, onPressed: () => Navigator.pop(ctx, 'read')),
+              const SizedBox(height: 12),
+            ],
+            ClayButton(label: 'Delete notification', icon: 'trash', tone: ClayTone.danger, onPressed: () => Navigator.pop(ctx, 'delete')),
+          ]),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'delete') {
+      await _delete(n);
+    } else if (choice == 'read' && !n.read) {
+      setState(() => n.read = true);
+      Api.readNotification(n.id).catchError((_) {});
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -139,7 +203,13 @@ class _NotificationsTabState extends State<NotificationsTab> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-          child: const Text('Alerts', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: -.4)),
+          child: Row(children: [
+            const Expanded(
+              child: Text('Alerts', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, letterSpacing: -.4)),
+            ),
+            if (_items.isNotEmpty)
+              ClayButton(label: 'Clear all', icon: 'trash', tone: ClayTone.soft, small: true, expanded: false, onPressed: _clearAll),
+          ]),
         ),
         Expanded(
           child: _loading
@@ -157,7 +227,7 @@ class _NotificationsTabState extends State<NotificationsTab> {
                               physics: const AlwaysScrollableScrollPhysics(),
                               padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
                               itemCount: _items.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 14),
+                              separatorBuilder: (_, __) => const SizedBox(height: 12),
                               itemBuilder: (context, i) {
                                 final n = _items[i];
                                 final (what, quote) = _text(n);
@@ -170,13 +240,11 @@ class _NotificationsTabState extends State<NotificationsTab> {
                                     decoration: BoxDecoration(color: C.rose.withValues(alpha: .15), borderRadius: BorderRadius.circular(22)),
                                     child: const HIcon('trash', color: C.rose),
                                   ),
-                                  onDismissed: (_) {
-                                    setState(() => _items.removeAt(i));
-                                    Api.deleteNotification(n.id).catchError((_) {});
-                                  },
+                                  onDismissed: (_) => _delete(n),
                                   child: ClayCard(
                                     radius: 22,
-                                    padding: const EdgeInsets.all(14),
+                                    depth: .5,
+                                    padding: const EdgeInsets.fromLTRB(14, 12, 4, 12),
                                     color: n.read ? C.surface : C.honeyPale,
                                     onTap: () => _open(n),
                                     child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -203,13 +271,25 @@ class _NotificationsTabState extends State<NotificationsTab> {
                                           ]),
                                         ]),
                                       ),
-                                      if (!n.read)
-                                        Container(
-                                          margin: const EdgeInsets.only(top: 6, left: 8),
-                                          width: 10,
-                                          height: 10,
-                                          decoration: const BoxDecoration(color: C.honeyDeep, shape: BoxShape.circle),
+                                      Column(children: [
+                                        Press(
+                                          onTap: () => _menu(n),
+                                          scale: .9,
+                                          child: Container(
+                                            width: 40,
+                                            height: 32,
+                                            alignment: Alignment.center,
+                                            child: const HIcon('more', size: 20, color: C.inkSoft),
+                                          ),
                                         ),
+                                        if (!n.read)
+                                          Container(
+                                            margin: const EdgeInsets.only(top: 4, right: 4),
+                                            width: 9,
+                                            height: 9,
+                                            decoration: const BoxDecoration(color: C.honeyDeep, shape: BoxShape.circle),
+                                          ),
+                                      ]),
                                     ]),
                                   ),
                                 );

@@ -145,6 +145,7 @@ class Api {
   static Future<void> readAllNotifications() => _send('POST', '/notifications/read');
   static Future<void> readNotification(String id) => _send('POST', '/notifications/$id/read');
   static Future<void> deleteNotification(String id) => _send('DELETE', '/notifications/$id');
+  static Future<void> deleteAllNotifications() => _send('DELETE', '/notifications');
 
   // events the server verifies against Supabase before notifying
   static Future<void> friendshipEvent(String userId) => _send('POST', '/events/friendship', body: {'userId': userId});

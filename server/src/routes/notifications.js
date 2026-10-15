@@ -64,6 +64,12 @@ router.post('/notifications/:id/read', ah(async (req, res) => {
   res.status(204).end();
 }));
 
+// Clear every notification of the signed-in user.
+router.delete('/notifications', ah(async (req, res) => {
+  await query('delete from notifications where user_id = $1', [req.user.id]);
+  res.status(204).end();
+}));
+
 router.delete('/notifications/:id', ah(async (req, res) => {
   const id = parse(uuid, req.params.id);
   await query('delete from notifications where id = $1 and user_id = $2', [id, req.user.id]);
