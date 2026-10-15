@@ -22,7 +22,7 @@ Future<void> main() async {
   if (Config.ready) {
     await Supabase.initialize(
       url: Config.supabaseUrl,
-      anonKey: Config.supabaseAnonKey,
+      publishableKey: Config.supabaseAnonKey,
       authOptions: const FlutterAuthClientOptions(
         authFlowType: AuthFlowType.pkce,
         localStorage: SecureSessionStorage(),

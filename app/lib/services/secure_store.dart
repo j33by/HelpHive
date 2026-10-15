@@ -7,18 +7,21 @@ const _vault = FlutterSecureStorage(aOptions: AndroidOptions(encryptedSharedPref
 /// Keeps the Supabase session in the Android keystore-backed store
 /// instead of plain shared preferences.
 class SecureSessionStorage extends LocalStorage {
-  const SecureSessionStorage()
-      : super(
-          initialize: _noop,
-          hasAccessToken: _has,
-          accessToken: _read,
-          removePersistedSession: _remove,
-          persistSession: _write,
-        );
+  const SecureSessionStorage();
 
-  static Future<void> _noop() async {}
-  static Future<bool> _has() async => (await _vault.containsKey(key: _key));
-  static Future<String?> _read() => _vault.read(key: _key);
-  static Future<void> _remove() => _vault.delete(key: _key);
-  static Future<void> _write(String value) => _vault.write(key: _key, value: value);
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<bool> hasAccessToken() => _vault.containsKey(key: _key);
+
+  @override
+  Future<String?> accessToken() => _vault.read(key: _key);
+
+  @override
+  Future<void> removePersistedSession() => _vault.delete(key: _key);
+
+  @override
+  Future<void> persistSession(String persistSessionString) =>
+      _vault.write(key: _key, value: persistSessionString);
 }

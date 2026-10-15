@@ -150,12 +150,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   yes: 'Delete forever',
                   danger: true,
                 );
-                if (!ok || !context.mounted) return;
+                if (!ok || !mounted) return;
                 try {
                   await Api.deleteAccount();
                   await sb.auth.signOut();
                 } catch (e) {
-                  if (context.mounted) toast(context, friendly(e));
+                  if (mounted) toast(context, friendly(e));
                 }
               },
             ),

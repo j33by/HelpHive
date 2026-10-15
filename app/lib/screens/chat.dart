@@ -232,11 +232,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       if (!ok) return;
       try {
         await Api.unsend(m.id);
-        if (mounted) setState(() {
-          m.deleted = true;
-          m.body = '';
-          m.reactions = {};
-        });
+        if (mounted) {
+          setState(() {
+            m.deleted = true;
+            m.body = '';
+            m.reactions = {};
+          });
+        }
       } catch (e) {
         if (mounted) toast(context, friendly(e));
       }
