@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../layout.dart';
-import '../services/alerts.dart';
 import '../theme.dart';
-import '../widgets/chat_bubble.dart';
 import '../widgets/clay.dart';
 import 'feed.dart';
 import 'messages.dart';
@@ -21,12 +19,6 @@ class _ShellState extends State<Shell> {
   final _app = AppState.I;
   final _stackKey = GlobalKey();
   DateTime? _lastBack;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => Alerts.I.consumeLaunch());
-  }
 
   static const _tabs = [
     ('home', 'home_fill', 'Feed'),
@@ -59,8 +51,7 @@ class _ShellState extends State<Shell> {
             _lastBack = now;
             toast(context, 'Press back again to leave');
           },
-          child: Stack(children: [
-            Positioned.fill(child: Scaffold(
+          child: Scaffold(
             body: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               if (wide)
                 _Sidebar(
@@ -104,9 +95,7 @@ class _ShellState extends State<Shell> {
                       ),
                     ),
                   ),
-            )),
-            const Positioned.fill(child: ChatBubbleLayer()),
-          ]),
+          ),
         );
       },
     );

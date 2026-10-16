@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'models.dart';
-import 'services/alerts.dart';
 import 'services/api.dart';
 import 'services/data.dart';
 
@@ -18,11 +17,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> start() async {
     Api.wake();
-    Alerts.I.requestPermission();
     await refreshMe();
-    await refreshBadges(force: true);
+    await refreshBadges();
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) => refreshBadges());
+    _timer = Timer.periodic(const Duration(seconds: 20), (_) => refreshBadges());
   }
 
   void stop() {
@@ -32,7 +30,6 @@ class AppState extends ChangeNotifier {
     notifBadge = 0;
     msgBadge = 0;
     tab.value = 0;
-    Alerts.I.reset();
   }
 
   Future<void> refreshMe() async {
@@ -42,15 +39,13 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<void> refreshBadges({bool force = false}) async {
+  Future<void> refreshBadges() async {
     try {
       final b = await Api.badges();
-      if (force || b.notifications != notifBadge || b.messages != msgBadge) {
+      if (b.notifications != notifBadge || b.messages != msgBadge) {
         notifBadge = b.notifications;
         msgBadge = b.messages;
         notifyListeners();
-        // something changed: look for new messages / alerts to announce
-        Alerts.I.check();
       }
     } catch (_) {}
   }
