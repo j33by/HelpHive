@@ -198,6 +198,7 @@ class Conversation {
   Conversation({
     required this.id,
     required this.user,
+    required this.lastId,
     required this.lastBody,
     required this.lastMine,
     required this.lastDeleted,
@@ -206,6 +207,7 @@ class Conversation {
   });
   final String id;
   final UserLite user;
+  final String lastId; // id of the newest message (empty if unknown)
   final String lastBody;
   final bool lastMine;
   final bool lastDeleted;
@@ -217,6 +219,7 @@ class Conversation {
     return Conversation(
       id: j['id'] as String,
       user: UserLite.fromJson(j['user'] as Map<String, dynamic>?),
+      lastId: lm['id'] as String? ?? '',
       lastBody: lm['body'] as String? ?? '',
       lastMine: lm['mine'] as bool? ?? false,
       lastDeleted: lm['deleted'] as bool? ?? false,
