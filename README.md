@@ -117,3 +117,11 @@ Every icon is a PNG in `app/assets/icons/`, drawn by `app/tool/make_icons.py` (n
 ## Features
 
 Email and Google sign-in, profile with avatar, cover, bio, location, username; posts (create, edit, delete, photo, category, mark resolved); five reactions; comments with replies, edit, delete and reactions; friends (add, cancel, confirm, decline, remove); two-column people grid with filters; search for people and posts; notifications; direct messages with search, replies, reactions, unsend and seen marks; bottom navigation with badges.
+
+## Floating bubble, phone notifications and sounds (Android)
+
+- **Floating chat bubble over every app.** Switch it on in Profile > Settings > *Floating chat bubble*. Android asks once for "Display over other apps". The bubble shows the unread count and the latest sender's picture, pops a preview when something arrives, and opens the right chat when tapped. Drag it anywhere; while dragging, an **X** appears at the bottom centre. Drop the bubble on it and it disappears (the setting switches off too).
+- **Background listener.** Settings > *Alerts when the app is closed* runs a quiet foreground service (one low-priority "Listening" notification) that keeps checking while the app is in the background or swiped away, then posts to the notification drawer. *Keep alerts running (battery)* asks Android not to put it to sleep; on some phones (Xiaomi, Oppo, Vivo, Huawei) also allow HelpHive to auto-start / run in the background in the phone's own settings.
+- **Drawer notifications** carry the sender's picture, the full preview, and for messages **Like** and **Reply** buttons. Icons are the app's own (copied from `assets/icons` into Android resources by `tool/patch_android.py`).
+- **Tones**: `assets/sounds/message.wav` for a new message, `alert.wav` for a new notification. Closed or in the background, the notification channel plays them; with the app open, the app plays them.
+- The native bubble code is in `tool/android/*.tmpl`; the patch script writes it into the generated Android project. Rebuild on Codemagic as before.
