@@ -34,7 +34,8 @@ class _NotifSettingsState extends State<NotifSettings> with WidgetsBindingObserv
   Future<void> _load() async {
     final b = await Bubble.isEnabled();
     final l = await Bubble.listenerEnabled();
-    if (mounted) setState(() {
+    if (!mounted) return;
+    setState(() {
       _bubble = b;
       _listener = l;
       _loaded = true;
@@ -120,7 +121,7 @@ class _Row extends StatelessWidget {
               Text(subtitle, style: const TextStyle(color: C.inkSoft, fontSize: 12.5, height: 1.3)),
             ]),
           ),
-          Switch(value: value, onChanged: onChanged, activeColor: C.honeyDeep),
+          Switch(value: value, onChanged: onChanged, activeThumbColor: C.honeyDeep),
         ]),
       );
 }
