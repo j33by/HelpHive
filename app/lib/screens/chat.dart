@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../platform.dart';
+import '../services/alerts.dart';
 import '../services/api.dart';
 import '../services/data.dart';
 import '../theme.dart';
@@ -41,6 +42,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    Alerts.I.activeConversation = widget.conversationId;
     _input.addListener(() => setState(() {}));
     _scroll.addListener(() {
       if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 300) _loadOlder();
@@ -55,6 +57,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _poll?.cancel();
     _input.dispose();
     _scroll.dispose();
+    if (Alerts.I.activeConversation == widget.conversationId) Alerts.I.activeConversation = null;
     AppState.I.refreshBadges();
     super.dispose();
   }
