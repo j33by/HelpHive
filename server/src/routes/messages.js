@@ -25,7 +25,7 @@ router.get('/conversations', ah(async (req, res) => {
   const { rows } = await query(
     `select c.id, c.last_message_at,
             case when c.user_a = $1 then c.user_b else c.user_a end as other_id,
-            lm.body as last_body, lm.sender_id as last_sender, (lm.deleted_at is not null) as last_deleted,
+            lm.id as last_id, lm.body as last_body, lm.sender_id as last_sender, (lm.deleted_at is not null) as last_deleted,
             (select count(*)::int from messages m
                where m.conversation_id = c.id and m.sender_id <> $1 and m.deleted_at is null
                  and m.created_at > case when c.user_a = $1 then c.a_read_at else c.b_read_at end) as unread
@@ -43,6 +43,7 @@ router.get('/conversations', ah(async (req, res) => {
       id: r.id,
       user: users.get(r.other_id),
       lastMessage: {
+        id: r.last_id,
         body: r.last_deleted ? '' : r.last_body.slice(0, 120),
         mine: r.last_sender === me,
         deleted: r.last_deleted,
