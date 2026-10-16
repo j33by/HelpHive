@@ -207,7 +207,7 @@ class Conversation {
   });
   final String id;
   final UserLite user;
-  final String lastId; // id of the newest message (empty if unknown)
+  final String lastId;
   final String lastBody;
   final bool lastMine;
   final bool lastDeleted;

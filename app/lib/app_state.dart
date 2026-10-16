@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'models.dart';
+import 'services/alerts.dart';
 import 'services/api.dart';
 import 'services/data.dart';
 
@@ -17,10 +18,11 @@ class AppState extends ChangeNotifier {
 
   Future<void> start() async {
     Api.wake();
+    Alerts.I.startListener();
     await refreshMe();
-    await refreshBadges();
+    await refreshBadges(force: true);
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 20), (_) => refreshBadges());
+    _timer = Timer.periodic(const Duration(seconds: 10), (_) => refreshBadges());
   }
 
   void stop() {
@@ -30,6 +32,7 @@ class AppState extends ChangeNotifier {
     notifBadge = 0;
     msgBadge = 0;
     tab.value = 0;
+    Alerts.I.stopListener();
   }
 
   Future<void> refreshMe() async {
@@ -39,10 +42,13 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<void> refreshBadges() async {
+  Future<void> refreshBadges({bool force = false}) async {
     try {
       final b = await Api.badges();
-      if (b.notifications != notifBadge || b.messages != msgBadge) {
+      final moreAlerts = b.notifications > notifBadge;
+      final moreMsgs = b.messages > msgBadge;
+      if (!force && (moreAlerts || moreMsgs)) Alerts.I.onBadgeGrowth(messages: moreMsgs, alerts: moreAlerts);
+      if (force || b.notifications != notifBadge || b.messages != msgBadge) {
         notifBadge = b.notifications;
         msgBadge = b.messages;
         notifyListeners();

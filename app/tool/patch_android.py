@@ -5,10 +5,9 @@ Sets the app label, the internet permission, the Google sign-in deep link,
 turns off cleartext traffic and backups, and raises minSdk to 23 (needed by
 the secure session store).
 
-Also does the native side of system notifications (flutter_local_notifications):
-the POST_NOTIFICATIONS permission, core library desugaring, the drawables the
-notifications refer to by name, and a keep rule so release builds don't strip
-them.
+Also sets up phone notifications: the POST_NOTIFICATIONS permission, core library
+desugaring (needed by flutter_local_notifications) and the notification icons,
+copied from assets/icons into the app's drawable resources.
 """
 import glob
 import os
@@ -23,11 +22,39 @@ if not os.path.exists(manifest):
 
 xml = open(manifest, encoding='utf-8').read()
 
-if 'android.permission.POST_NOTIFICATIONS' not in xml:
-    xml = xml.replace('<application', '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <application', 1)
-
 if 'android.permission.INTERNET' not in xml:
     xml = xml.replace('<application', '<uses-permission android:name="android.permission.INTERNET"/>\n    <application', 1)
+
+if 'android.permission.POST_NOTIFICATIONS' not in xml:
+    xml = xml.replace('<application', '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <application', 1)
+if 'android.permission.VIBRATE' not in xml:
+    xml = xml.replace('<application', '<uses-permission android:name="android.permission.VIBRATE"/>\n    <application', 1)
+
+for perm in ('SYSTEM_ALERT_WINDOW', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_SPECIAL_USE', 'WAKE_LOCK',
+             'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS', 'RECEIVE_BOOT_COMPLETED'):
+    if f'android.permission.{perm}' not in xml:
+        xml = xml.replace('<application', f'<uses-permission android:name="android.permission.{perm}"/>\n    <application', 1)
+
+# xmlns:tools is needed to override the background service's declaration
+if 'xmlns:tools' not in xml:
+    xml = xml.replace('<manifest ', '<manifest xmlns:tools="http://schemas.android.com/tools" ', 1)
+
+if 'BubbleService' not in xml:
+    services = '''
+        <!-- the floating chat bubble over other apps -->
+        <service android:name=".BubbleService" android:exported="false"/>
+        <!-- the quiet background listener; "specialUse" has no daily time limit -->
+        <service
+            android:name="id.flutter.flutter_background_service.BackgroundService"
+            android:exported="true"
+            android:foregroundServiceType="specialUse"
+            tools:replace="android:foregroundServiceType,android:exported">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Listens for new chat messages and alerts while the app is closed"/>
+        </service>
+    '''
+    xml = xml.replace('</application>', services + '</application>', 1)
 
 xml = re.sub(r'android:label="[^"]*"', 'android:label="HelpHive"', xml, count=1)
 for attr, val in (('allowBackup', 'false'), ('usesCleartextTraffic', 'false')):
@@ -56,43 +83,63 @@ for gradle in glob.glob(os.path.join(root, 'build.gradle*')):
         open(gradle, 'w', encoding='utf-8').write(new)
         print('minSdk ->', os.path.basename(gradle))
 
-
-# --- core library desugaring (required by flutter_local_notifications)
-DESUGAR = 'com.android.tools:desugar_jdk_libs:2.1.4'
-for gradle in glob.glob(os.path.join(root, 'build.gradle*')):
-    src = open(gradle, encoding='utf-8').read()
-    new = src
+    # core library desugaring, required by flutter_local_notifications
     kts = gradle.endswith('.kts')
-    if 'oreLibraryDesugaring' not in new:
-        flag = 'isCoreLibraryDesugaringEnabled = true' if kts else 'coreLibraryDesugaringEnabled true'
-        new, n = re.subn(r'(compileOptions\s*\{)', lambda m: m.group(1) + '\n        ' + flag, new, count=1)
-        if n == 0:
-            sys.exit('Could not find compileOptions in ' + gradle)
-        dep = f'\n\ndependencies {{\n    coreLibraryDesugaring("{DESUGAR}")\n}}\n' if kts else f"\n\ndependencies {{\n    coreLibraryDesugaring '{DESUGAR}'\n}}\n"
-        new = new.rstrip('\n') + dep
-    if new != src:
-        open(gradle, 'w', encoding='utf-8').write(new)
-        print('desugaring ->', os.path.basename(gradle))
+    src = open(gradle, encoding='utf-8').read()
+    if True:
+        if 'coreLibraryDesugaring' not in src and 'compileOptions' in src:
+            flag = 'isCoreLibraryDesugaringEnabled = true' if kts else 'coreLibraryDesugaringEnabled true'
+            src = re.sub(r'compileOptions\s*\{', lambda m: m.group(0) + '\n        ' + flag, src, count=1)
+            dep = ('\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n' if kts
+                   else "\ndependencies {\n    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'\n}\n")
+            src += dep
+            open(gradle, 'w', encoding='utf-8').write(src)
+            print('desugaring ->', os.path.basename(gradle))
 
-# --- drawables the notifications look up by name
-res = os.path.join(root, 'src', 'main', 'res')
+# notification icons: the status bar uses only the alpha channel, so the brown
+# artwork becomes a clean white glyph; the large icon is the bee
 icons = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'icons')
-drawables = {
-    'ic_stat_chat': 'chat.png',      # status-bar icons only use the alpha channel
-    'ic_stat_bell': 'bell.png',
-    'ic_action_like': 'heart.png',
-    'ic_action_reply': 'reply.png',
-    'ic_large_bee': 'bee.png',       # fallback avatar
-}
-os.makedirs(os.path.join(res, 'drawable-nodpi'), exist_ok=True)
-for name, src_png in drawables.items():
-    shutil.copyfile(os.path.join(icons, src_png), os.path.join(res, 'drawable-nodpi', name + '.png'))
+drawable = os.path.join(root, 'src', 'main', 'res', 'drawable')
+os.makedirs(drawable, exist_ok=True)
+for src_name, res_name in (
+    ('chat_fill.png', 'ic_stat_chat.png'),
+    ('bell_fill.png', 'ic_stat_bell.png'),
+    ('heart_fill.png', 'ic_action_like.png'),
+    ('reply.png', 'ic_action_reply.png'),
+    ('bee.png', 'ic_large_bee.png'),
+    ('close.png', 'ic_bubble_close.png'),
+    ('bell_fill.png', 'ic_bg_service_small.png'),  # icon of the quiet listener notification
+):
+    shutil.copyfile(os.path.join(icons, src_name), os.path.join(drawable, res_name))
+# the two notification tones, used by the notification channels
+raw_dir = os.path.join(root, 'src', 'main', 'res', 'raw')
+os.makedirs(raw_dir, exist_ok=True)
+sounds = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'sounds')
+shutil.copyfile(os.path.join(sounds, 'message.wav'), os.path.join(raw_dir, 'message_tone.wav'))
+shutil.copyfile(os.path.join(sounds, 'alert.wav'), os.path.join(raw_dir, 'alert_tone.wav'))
 
-# resources only referenced by string would be stripped from release builds
-os.makedirs(os.path.join(res, 'raw'), exist_ok=True)
-with open(os.path.join(res, 'raw', 'keep.xml'), 'w', encoding='utf-8') as f:
+# native code for the floating bubble, written into the app's own package
+kotlin_root = os.path.join(root, 'src', 'main', 'kotlin')
+activity = None
+for dirpath, _, files in os.walk(kotlin_root):
+    if 'MainActivity.kt' in files:
+        activity = os.path.join(dirpath, 'MainActivity.kt')
+        break
+if activity is None:
+    sys.exit('MainActivity.kt not found under ' + kotlin_root)
+pkg = re.search(r'^package\s+([\w.]+)', open(activity, encoding='utf-8').read(), re.M).group(1)
+tmpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'android')
+for name in ('MainActivity', 'BubbleService'):
+    code = open(os.path.join(tmpl, name + '.kt.tmpl'), encoding='utf-8').read().replace('__PKG__', pkg)
+    open(os.path.join(os.path.dirname(activity), name + '.kt'), 'w', encoding='utf-8').write(code)
+print('Bubble service written to package', pkg)
+
+# icons are looked up by name at runtime, so keep the resource shrinker away from them
+raw = os.path.join(root, 'src', 'main', 'res', 'raw')
+os.makedirs(raw, exist_ok=True)
+with open(os.path.join(raw, 'keep.xml'), 'w', encoding='utf-8') as f:
     f.write('<?xml version="1.0" encoding="utf-8"?>\n'
-            '<resources xmlns:tools="http://schemas.android.com/tools"\n'
-            '    tools:keep="@drawable/ic_stat_*,@drawable/ic_action_*,@drawable/ic_large_bee" />\n')
+            '<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@drawable/ic_*,@raw/*_tone"/>\n')
+print('Notification icons copied.')
 
 print('Android project patched.')

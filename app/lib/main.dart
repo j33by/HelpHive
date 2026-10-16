@@ -8,6 +8,7 @@ import 'config.dart';
 import 'platform.dart';
 import 'screens/auth.dart';
 import 'screens/shell.dart';
+import 'services/alerts.dart';
 import 'services/secure_store.dart';
 import 'theme.dart';
 
@@ -33,6 +34,7 @@ Future<void> main() async {
       ),
     );
   }
+  await Alerts.I.init();
   runApp(const HelpHiveApp());
 }
 
@@ -53,6 +55,7 @@ class HelpHiveApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) => MaterialApp(
         title: 'HelpHive',
+        navigatorKey: navigatorKey,
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),
         scrollBehavior: const _AnyDeviceScroll(),

@@ -18,8 +18,8 @@ dependencies:
   cached_network_image: ^3.4.1
   google_fonts: ^6.2.1
   audioplayers: ^6.1.0
-  # v19 on purpose: v20 switched show() to named parameters
-  flutter_local_notifications: ^19.4.0
+  flutter_background_service: ^5.1.0
+  flutter_local_notifications: ^19.0.0
 
 dev_dependencies:
   flutter_test:

@@ -1,0 +1,441 @@
+package __PKG__
+
+import android.animation.ValueAnimator
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.provider.Settings
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewConfiguration
+import android.view.ViewOutlineProvider
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
+import org.json.JSONObject
+import java.net.URL
+import kotlin.math.abs
+import kotlin.math.hypot
+
+/**
+ * The floating chat head. It lives in a service, so it shows over every app.
+ * Drag it anywhere; while dragging an X target appears at the bottom centre and
+ * dropping the bubble on it removes the bubble (and switches it off in settings).
+ * It is fed through the Flutter shared preferences by the background listener.
+ */
+class BubbleService : Service() {
+    private lateinit var wm: WindowManager
+    private lateinit var prefs: SharedPreferences
+    private lateinit var own: SharedPreferences
+    private val handler = Handler(Looper.getMainLooper())
+
+    private var bubble: FrameLayout? = null
+    private var bubbleLp: WindowManager.LayoutParams? = null
+    private var avatar: ImageView? = null
+    private var badge: TextView? = null
+    private var closeView: FrameLayout? = null
+    private var closeLp: WindowManager.LayoutParams? = null
+    private var preview: LinearLayout? = null
+    private var hidePreview: Runnable? = null
+    private var avatarUrl: String? = null
+    private var lastPreviewTick = 0L
+    private var overClose = false
+
+    private val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        handler.post { onPref(key) }
+    }
+
+    private fun dp(v: Int): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
+    private val screenW get() = resources.displayMetrics.widthPixels
+    private val screenH get() = resources.displayMetrics.heightPixels
+    private val bubbleSize get() = dp(60)
+
+    @Suppress("DEPRECATION")
+    private fun overlayType(): Int =
+        if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else WindowManager.LayoutParams.TYPE_PHONE
+
+    private fun drawable(name: String): Int = resources.getIdentifier(name, "drawable", packageName)
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        own = getSharedPreferences("hh_bubble", Context.MODE_PRIVATE)
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val allowed = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)
+        if (!allowed || !prefs.getBoolean("flutter.bubble_enabled", false)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        if (bubble == null) createBubble()
+        refreshAll()
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        removeViews()
+        super.onDestroy()
+    }
+
+    // ---- building the views
+    private fun createBubble() {
+        val size = bubbleSize
+        val root = FrameLayout(this)
+        val av = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFFF2B33D.toInt())
+                setStroke(dp(2), 0xFFFFFFFF.toInt())
+            }
+            clipToOutline = true
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            elevation = dp(6).toFloat()
+        }
+        setBee(av)
+        root.addView(av, FrameLayout.LayoutParams(size, size))
+
+        val bd = TextView(this).apply {
+            setTextColor(0xFFFFFFFF.toInt())
+            setTypeface(typeface, Typeface.BOLD)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            gravity = Gravity.CENTER
+            minWidth = dp(20)
+            setPadding(dp(5), 0, dp(5), 0)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(0xFFD9694F.toInt())
+                setStroke(dp(2), 0xFFF5EEE4.toInt())
+            }
+            visibility = View.GONE
+            elevation = dp(8).toFloat()
+        }
+        root.addView(bd, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, dp(20)).apply { gravity = Gravity.TOP or Gravity.END })
+
+        val lp = WindowManager.LayoutParams(
+            size, size, overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = own.getInt("x", screenW - size - dp(4))
+            y = own.getInt("y", (screenH * 0.4).toInt())
+        }
+        root.setOnTouchListener(touch(root, lp))
+        try {
+            wm.addView(root, lp)
+        } catch (e: Exception) {
+            stopSelf()
+            return
+        }
+        bubble = root; bubbleLp = lp; avatar = av; badge = bd
+    }
+
+    private fun setBee(av: ImageView) {
+        val id = drawable("ic_large_bee")
+        if (id != 0) av.setImageResource(id)
+        val pad = dp(12)
+        av.setPadding(pad, pad, pad, pad)
+        avatarUrl = null
+    }
+
+    private fun touch(root: View, lp: WindowManager.LayoutParams) = object : View.OnTouchListener {
+        var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
+        var moved = false
+        val slop = ViewConfiguration.get(this@BubbleService).scaledTouchSlop
+
+        override fun onTouch(v: View, e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y; moved = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downX
+                    val dy = e.rawY - downY
+                    if (!moved && (abs(dx) > slop || abs(dy) > slop)) {
+                        moved = true
+                        dropPreview()
+                        showClose()
+                    }
+                    if (moved) {
+                        var nx = (startX + dx).toInt()
+                        var ny = (startY + dy).toInt()
+                        nx = nx.coerceIn(-dp(10), screenW - bubbleSize + dp(10))
+                        ny = ny.coerceIn(0, screenH - bubbleSize)
+                        val near = nearClose(nx, ny)
+                        if (near) {
+                            val c = closeCenter()
+                            nx = c.first - bubbleSize / 2
+                            ny = c.second - bubbleSize / 2
+                        }
+                        setOverClose(near, v)
+                        lp.x = nx; lp.y = ny
+                        try { wm.updateViewLayout(root, lp) } catch (_: Exception) {}
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!moved) {
+                        openApp()
+                    } else if (overClose) {
+                        hideClose()
+                        removeForGood()
+                    } else {
+                        hideClose()
+                        snapToEdge(root, lp)
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    hideClose()
+                    snapToEdge(root, lp)
+                }
+            }
+            return true
+        }
+    }
+
+    private fun snapToEdge(root: View, lp: WindowManager.LayoutParams) {
+        val target = if (lp.x + bubbleSize / 2 < screenW / 2) dp(4) else screenW - bubbleSize - dp(4)
+        ValueAnimator.ofInt(lp.x, target).apply {
+            duration = 180
+            addUpdateListener {
+                lp.x = it.animatedValue as Int
+                try { wm.updateViewLayout(root, lp) } catch (_: Exception) {}
+            }
+            start()
+        }
+        own.edit().putInt("x", target).putInt("y", lp.y).apply()
+    }
+
+    // ---- the X target
+    private fun closeCenter(): Pair<Int, Int> = Pair(screenW / 2, screenH - dp(110))
+
+    private fun nearClose(x: Int, y: Int): Boolean {
+        val c = closeCenter()
+        return hypot((x + bubbleSize / 2 - c.first).toDouble(), (y + bubbleSize / 2 - c.second).toDouble()) < dp(80)
+    }
+
+    private fun showClose() {
+        if (closeView != null) return
+        val size = dp(64)
+        val frame = FrameLayout(this).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xCC3A2E24.toInt())
+            }
+            alpha = 0f
+            scaleX = 0.6f; scaleY = 0.6f
+        }
+        val x = ImageView(this).apply {
+            val id = drawable("ic_bubble_close")
+            if (id != 0) setImageResource(id)
+            setColorFilter(0xFFFFFFFF.toInt())
+        }
+        frame.addView(x, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+        val c = closeCenter()
+        val lp = WindowManager.LayoutParams(
+            size, size, overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            this.x = c.first - size / 2
+            this.y = c.second - size / 2
+        }
+        try {
+            wm.addView(frame, lp)
+            frame.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(160).start()
+            closeView = frame; closeLp = lp
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun setOverClose(near: Boolean, v: View) {
+        if (near == overClose) return
+        overClose = near
+        closeView?.animate()?.scaleX(if (near) 1.3f else 1f)?.scaleY(if (near) 1.3f else 1f)?.setDuration(120)?.start()
+        if (near) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    private fun hideClose() {
+        overClose = false
+        val cv = closeView ?: return
+        closeView = null
+        cv.animate().alpha(0f).setDuration(120).withEndAction {
+            try { wm.removeView(cv) } catch (_: Exception) {}
+        }.start()
+    }
+
+    /** Dropped on the X: gone, and the switch in settings goes off with it. */
+    private fun removeForGood() {
+        prefs.edit().putBoolean("flutter.bubble_enabled", false).apply()
+        val b = bubble
+        if (b == null) { stopSelf(); return }
+        b.animate().alpha(0f).scaleX(0.2f).scaleY(0.2f).setDuration(150).withEndAction { stopSelf() }.start()
+    }
+
+    // ---- previews and state
+    private fun onPref(key: String?) {
+        when (key) {
+            "flutter.bubble_enabled" -> if (!prefs.getBoolean("flutter.bubble_enabled", false)) stopSelf()
+            "flutter.bubble_unread" -> updateBadge()
+            "flutter.bubble_head" -> updateHead()
+            "flutter.bubble_preview" -> showPreview()
+        }
+    }
+
+    private fun refreshAll() {
+        updateBadge()
+        updateHead()
+    }
+
+    private fun updateBadge() {
+        val n = try { prefs.getLong("flutter.bubble_unread", 0L) } catch (_: Exception) { 0L }
+        badge?.apply {
+            if (n > 0) {
+                text = if (n > 99) "99+" else n.toString()
+                visibility = View.VISIBLE
+            } else {
+                visibility = View.GONE
+            }
+        }
+    }
+
+    private fun updateHead() {
+        val av = avatar ?: return
+        var url: String? = null
+        try {
+            val j = JSONObject(prefs.getString("flutter.bubble_head", "{}") ?: "{}")
+            if (j.has("avatar") && !j.isNull("avatar")) url = j.getString("avatar")
+        } catch (_: Exception) {}
+        if (url == avatarUrl && url != null) return
+        if (url == null || !url.startsWith("http")) {
+            setBee(av)
+            return
+        }
+        avatarUrl = url
+        Thread {
+            try {
+                val c = URL(url).openConnection().apply { connectTimeout = 5000; readTimeout = 5000 }
+                val bmp: Bitmap? = c.getInputStream().use { BitmapFactory.decodeStream(it) }
+                if (bmp != null) handler.post {
+                    if (avatarUrl == url) {
+                        av.setPadding(0, 0, 0, 0)
+                        av.setImageBitmap(bmp)
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }.start()
+    }
+
+    private fun showPreview() {
+        val lp0 = bubbleLp ?: return
+        val raw = prefs.getString("flutter.bubble_preview", null) ?: return
+        val j = try { JSONObject(raw) } catch (_: Exception) { return }
+        val tick = j.optLong("tick", 0L)
+        if (tick <= lastPreviewTick) return
+        lastPreviewTick = tick
+        dropPreview()
+        pulse()
+
+        val onRight = lp0.x + bubbleSize / 2 > screenW / 2
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(18).toFloat()
+                setColor(0xFFFBF7F0.toInt())
+                setStroke(dp(1), 0xFFEDE3D4.toInt())
+            }
+            elevation = dp(6).toFloat()
+        }
+        card.addView(TextView(this).apply {
+            text = j.optString("title", "HelpHive")
+            setTextColor(0xFF3A2E24.toInt())
+            setTypeface(typeface, Typeface.BOLD)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            maxWidth = dp(210)
+        })
+        card.addView(TextView(this).apply {
+            text = j.optString("text", "")
+            setTextColor(0xFF8A7A6A.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            maxWidth = dp(210)
+        })
+        card.setOnClickListener { dropPreview(); openApp() }
+
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or (if (onRight) Gravity.END else Gravity.START)
+            x = if (onRight) screenW - lp0.x + dp(8) else lp0.x + bubbleSize + dp(8)
+            y = lp0.y + dp(4)
+        }
+        try {
+            wm.addView(card, lp)
+            preview = card
+            val r = Runnable { dropPreview() }
+            hidePreview = r
+            handler.postDelayed(r, 6000)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun dropPreview() {
+        hidePreview?.let { handler.removeCallbacks(it) }
+        hidePreview = null
+        preview?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+        preview = null
+    }
+
+    private fun pulse() {
+        bubble?.animate()?.scaleX(1.25f)?.scaleY(1.25f)?.setDuration(140)?.withEndAction {
+            bubble?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(220)?.start()
+        }?.start()
+    }
+
+    private fun openApp() {
+        dropPreview()
+        val i = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            putExtra("hh_payload", prefs.getString("flutter.bubble_latest", "") ?: "")
+        }
+        try { startActivity(i) } catch (_: Exception) {}
+    }
+
+    private fun removeViews() {
+        dropPreview()
+        closeView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+        closeView = null
+        bubble?.let { try { wm.removeView(it) } catch (_: Exception) {} }
+        bubble = null
+    }
+}

@@ -7,6 +7,7 @@ import '../services/data.dart';
 import '../theme.dart';
 import '../widgets/clay.dart';
 import '../widgets/friend_actions.dart';
+import '../widgets/notif_settings.dart';
 import '../widgets/post_card.dart';
 import '../widgets/reactions.dart';
 import 'chat.dart';
@@ -121,12 +122,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void _settings() {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             const Text('Settings', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
             const SizedBox(height: 14),
+            const NotifSettings(),
             ClayButton(
               label: 'Sign out',
               icon: 'logout',

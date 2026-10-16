@@ -1,83 +1,75 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../app_state.dart';
 import '../models.dart';
-import '../platform.dart';
+import '../services/alerts.dart';
 import '../services/api.dart';
 import '../services/data.dart';
 import '../theme.dart';
 import '../widgets/clay.dart';
 import '../widgets/reactions.dart';
-import 'profile.dart';
-import '../layout.dart';
 
+/// One conversation. `embedded` is the desktop split view (no back button).
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.conversationId, required this.other, this.embedded = false});
   final String conversationId;
   final UserLite other;
-
-  /// Shown inside the chats tab next to the list (desktop), so no back button.
   final bool embedded;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
+class _ChatScreenState extends State<ChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
   List<Message> _msgs = []; // oldest first
-  DateTime? _otherReadAt;
   bool _loading = true;
   bool _hasMore = false;
-  bool _loadingOlder = false;
+  bool _loadingMore = false;
   bool _sending = false;
   String? _error;
+  DateTime? _otherReadAt;
   Message? _replyTo;
   Timer? _poll;
-  int _tmp = 0;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _input.addListener(() => setState(() {}));
+    Alerts.I.activeConversation = widget.conversationId;
+    _load();
+    _poll = Timer.periodic(const Duration(seconds: 4), (_) => _load(quiet: true));
     _scroll.addListener(() {
-      if (_scroll.position.pixels > _scroll.position.maxScrollExtent - 300) _loadOlder();
+      if (_scroll.hasClients && _scroll.position.pixels >= _scroll.position.maxScrollExtent - 200) _loadOlder();
     });
-    _initial();
-    _poll = Timer.periodic(const Duration(seconds: 4), (_) => _refresh());
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _poll?.cancel();
+    if (Alerts.I.activeConversation == widget.conversationId) Alerts.I.activeConversation = null;
     _input.dispose();
     _scroll.dispose();
-    AppState.I.refreshBadges();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refresh();
-  }
-
-  Future<void> _initial() async {
+  Future<void> _load({bool quiet = false}) async {
     try {
       final r = await Api.messages(widget.conversationId);
       if (!mounted) return;
+      final pending = _msgs.where((m) => m.pending).toList();
+      final changed = _msgs.isEmpty || r.messages.length != _msgs.where((m) => !m.pending).length || (r.messages.isNotEmpty && _msgs.isNotEmpty && r.messages.last.id != _msgs.where((m) => !m.pending).lastOrNull?.id);
       setState(() {
-        _msgs = r.messages;
-        _hasMore = r.hasMore;
+        // keep older pages that were already loaded
+        final older = _msgs.where((m) => !m.pending && r.messages.isNotEmpty && m.createdAt.isBefore(r.messages.first.createdAt)).toList();
+        _msgs = [...older, ...r.messages, ...pending];
+        _hasMore = older.isNotEmpty ? _hasMore : r.hasMore;
         _otherReadAt = r.otherReadAt;
         _loading = false;
         _error = null;
       });
-      _markRead();
+      if (changed || !quiet) _markRead();
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || quiet) return;
       setState(() {
         _error = friendly(e);
         _loading = false;
@@ -85,45 +77,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _refresh() async {
-    if (_loading || _error != null) return;
-    try {
-      final r = await Api.messages(widget.conversationId);
-      if (!mounted) return;
-      final earliest = r.messages.isEmpty ? null : r.messages.first.createdAt;
-      final older = earliest == null ? <Message>[] : _msgs.where((m) => !m.pending && m.createdAt.isBefore(earliest)).toList();
-      final hadIncoming = r.messages.any((m) => m.senderId != myId && !_msgs.any((x) => x.id == m.id));
-      setState(() {
-        _msgs = [...older, ...r.messages, ..._msgs.where((m) => m.pending)];
-        _otherReadAt = r.otherReadAt;
-      });
-      if (hadIncoming) _markRead();
-    } catch (_) {
-      // transient; the next tick tries again
-    }
-  }
-
-  void _markRead() {
-    Api.markRead(widget.conversationId).then((_) => AppState.I.refreshBadges()).catchError((_) {});
-  }
-
   Future<void> _loadOlder() async {
-    if (_loadingOlder || !_hasMore) return;
-    final first = _msgs.where((m) => !m.pending).firstOrNull;
-    if (first == null) return;
-    _loadingOlder = true;
+    if (_loadingMore || !_hasMore || _msgs.isEmpty) return;
+    _loadingMore = true;
     try {
-      final r = await Api.messages(widget.conversationId, before: first.createdAt);
+      final r = await Api.messages(widget.conversationId, before: _msgs.first.createdAt);
       if (!mounted) return;
       setState(() {
-        final seen = _msgs.map((m) => m.id).toSet();
-        _msgs = [...r.messages.where((m) => !seen.contains(m.id)), ..._msgs];
+        _msgs = [...r.messages, ..._msgs];
         _hasMore = r.hasMore;
       });
     } catch (_) {
     } finally {
-      _loadingOlder = false;
+      _loadingMore = false;
     }
+  }
+
+  Future<void> _markRead() async {
+    try {
+      await Api.markRead(widget.conversationId);
+      AppState.I.refreshBadges(force: true);
+    } catch (_) {}
   }
 
   Future<void> _send() async {
@@ -131,31 +105,30 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (text.isEmpty || _sending) return;
     final reply = _replyTo;
     final temp = Message(
-      id: 'tmp-${_tmp++}',
+      id: 'tmp_${DateTime.now().microsecondsSinceEpoch}',
       senderId: myId,
       body: text,
       deleted: false,
       createdAt: DateTime.now(),
-      replyTo: reply == null ? null : ReplyRef(id: reply.id, body: reply.body, senderId: reply.senderId, deleted: false),
+      replyTo: reply == null ? null : ReplyRef(id: reply.id, body: reply.body, senderId: reply.senderId, deleted: reply.deleted),
       reactions: {},
       pending: true,
     );
     setState(() {
-      _msgs.add(temp);
-      _input.clear();
-      _replyTo = null;
       _sending = true;
+      _msgs = [..._msgs, temp];
+      _replyTo = null;
+      _input.clear();
     });
     try {
       await Api.sendMessage(widget.conversationId, text, replyTo: reply?.id);
-      await _refresh();
-      if (mounted) setState(() => _msgs.removeWhere((m) => m.id == temp.id));
+      _msgs.removeWhere((m) => m.id == temp.id);
+      await _load(quiet: true);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _msgs.removeWhere((m) => m.id == temp.id);
         _input.text = text;
-        _replyTo = reply;
       });
       toast(context, friendly(e));
     } finally {
@@ -163,341 +136,213 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _react(Message m, String? kind) async {
-    final prev = m.myReaction;
-    final prevMap = Map<String, int>.from(m.reactions);
-    setState(() {
-      if (prev != null) {
-        final n = (m.reactions[prev] ?? 1) - 1;
-        if (n <= 0) {
-          m.reactions.remove(prev);
-        } else {
-          m.reactions[prev] = n;
-        }
-      }
-      if (kind != null) m.reactions[kind] = (m.reactions[kind] ?? 0) + 1;
-      m.myReaction = kind;
-    });
+  Future<void> _react(Message m) async {
+    if (m.pending || m.deleted) return;
+    final pick = await pickReaction(context, current: m.myReaction);
+    if (pick == null) return;
+    final kind = pick.isEmpty ? null : pick;
     try {
       await Api.reactMessage(m.id, kind);
+      _load(quiet: true);
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        m.reactions = prevMap;
-        m.myReaction = prev;
-      });
-      toast(context, friendly(e));
+      if (mounted) toast(context, friendly(e));
     }
   }
 
-  Future<void> _actions(Message m) async {
+  Future<void> _unsend(Message m) async {
+    final ok = await confirm(context, title: 'Unsend message?', body: 'It will be removed for both of you.', yes: 'Unsend', danger: true);
+    if (!ok) return;
+    try {
+      await Api.unsend(m.id);
+      _load(quiet: true);
+    } catch (e) {
+      if (mounted) toast(context, friendly(e));
+    }
+  }
+
+  void _options(Message m) {
     if (m.pending || m.deleted) return;
     final mine = m.senderId == myId;
-    final choice = await showModalBottomSheet<String>(
+    showModalBottomSheet<void>(
       context: context,
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: clayDeco(radius: 34, depth: .55),
-              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                for (final k in reactionKinds)
-                  Press(
-                    scale: 1.12,
-                    onTap: () => Navigator.pop(ctx, m.myReaction == k ? 'r:' : 'r:$k'),
-                    child: Container(
-                      padding: const EdgeInsets.all(7),
-                      decoration: m.myReaction == k ? const BoxDecoration(color: C.honeyPale, shape: BoxShape.circle) : null,
-                      child: ReactionImg(k, size: 34),
-                    ),
-                  ),
-              ]),
-            ),
-            const SizedBox(height: 12),
-            _SheetRow(icon: 'reply', label: 'Reply', onTap: () => Navigator.pop(ctx, 'reply')),
-            _SheetRow(icon: 'comment', label: 'Copy text', onTap: () => Navigator.pop(ctx, 'copy')),
-            if (mine) _SheetRow(icon: 'trash', label: 'Unsend', danger: true, onTap: () => Navigator.pop(ctx, 'unsend')),
+            ClayButton(label: 'React', icon: 'heart', tone: ClayTone.soft, onPressed: () {
+              Navigator.pop(ctx);
+              _react(m);
+            }),
+            const SizedBox(height: 10),
+            ClayButton(label: 'Reply', icon: 'reply', tone: ClayTone.soft, onPressed: () {
+              Navigator.pop(ctx);
+              setState(() => _replyTo = m);
+            }),
+            if (mine) ...[
+              const SizedBox(height: 10),
+              ClayButton(label: 'Unsend', icon: 'trash', tone: ClayTone.soft, onPressed: () {
+                Navigator.pop(ctx);
+                _unsend(m);
+              }),
+            ],
           ]),
         ),
       ),
     );
-    if (choice == null || !mounted) return;
-    if (choice.startsWith('r:')) {
-      final k = choice.substring(2);
-      _react(m, k.isEmpty ? null : k);
-    } else if (choice == 'reply') {
-      setState(() => _replyTo = m);
-    } else if (choice == 'copy') {
-      await Clipboard.setData(ClipboardData(text: m.body));
-      if (mounted) toast(context, 'Copied');
-    } else if (choice == 'unsend') {
-      final ok = await confirm(context, title: 'Unsend this message?', body: 'It disappears for both of you.', yes: 'Unsend', danger: true);
-      if (!ok) return;
-      try {
-        await Api.unsend(m.id);
-        if (mounted) {
-          setState(() {
-            m.deleted = true;
-            m.body = '';
-            m.reactions = {};
-          });
-        }
-      } catch (e) {
-        if (mounted) toast(context, friendly(e));
-      }
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     final o = widget.other;
-    final shown = _msgs.reversed.toList(); // newest first for the reversed list
-    final lastMineIdx = shown.indexWhere((m) => m.senderId == myId && !m.pending);
-
+    final lastMineIdx = _msgs.lastIndexWhere((m) => m.senderId == myId && !m.pending && !m.deleted);
     return Scaffold(
+      backgroundColor: C.bg,
       appBar: AppBar(
-        toolbarHeight: 68,
         automaticallyImplyLeading: false,
-        leading: widget.embedded
-            ? null
-            : Padding(
-                padding: const EdgeInsets.only(left: 12),
-                child: Center(child: ClayIconButton(icon: 'back', size: 40, onTap: () => Navigator.pop(context))),
-              ),
-        titleSpacing: widget.embedded ? 20 : 12,
-        title: Press(
-          onTap: o.id.isEmpty ? null : () => Navigator.push(context, appRoute(ProfileScreen(userId: o.id))),
-          child: Row(children: [
-            Avatar(url: o.avatarUrl, name: o.display, size: 40),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(o.display, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-                Text('@${o.username}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, color: C.inkSoft, fontWeight: FontWeight.w500)),
-              ]),
-            ),
-          ]),
-        ),
+        leading: widget.embedded ? null : IconButton(icon: const HIcon('back'), onPressed: () => Navigator.maybePop(context)),
+        titleSpacing: widget.embedded ? 16 : 0,
+        title: Row(children: [
+          Avatar(url: o.avatarUrl, name: o.display, size: 36),
+          const SizedBox(width: 10),
+          Expanded(child: Text(o.display, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17))),
+        ]),
       ),
       body: Column(children: [
         Expanded(
           child: _loading
               ? const Center(child: CircularProgressIndicator())
-              : _error != null
-                  ? Failed(message: _error!, onRetry: () {
-                      setState(() {
-                        _loading = true;
-                        _error = null;
-                      });
-                      _initial();
-                    })
-                  : shown.isEmpty
-                      ? Empty(icon: 'chat', title: 'Say hello to ${o.display}', subtitle: 'Your messages show up here.')
+              : _error != null && _msgs.isEmpty
+                  ? Failed(message: _error!, onRetry: _load)
+                  : _msgs.isEmpty
+                      ? Empty(icon: 'chat', title: 'Say hello to ${o.display}', subtitle: 'Your messages will show up here.')
                       : ListView.builder(
                           controller: _scroll,
                           reverse: true,
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                          itemCount: shown.length + (_hasMore ? 1 : 0),
-                          itemBuilder: (context, i) {
-                            if (i >= shown.length) {
-                              return const Padding(padding: EdgeInsets.all(12), child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.4))));
-                            }
-                            final m = shown[i];
-                            final mine = m.senderId == myId;
-                            final older = i + 1 < shown.length ? shown[i + 1] : null;
-                            final showTime = older == null || m.createdAt.difference(older.createdAt).inMinutes >= 30;
-                            final seen = i == lastMineIdx && _otherReadAt != null && !_otherReadAt!.isBefore(m.createdAt);
-                            return Column(children: [
-                              if (showTime)
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
-                                  child: Text(_stamp(m.createdAt), style: const TextStyle(color: C.inkSoft, fontSize: 12, fontWeight: FontWeight.w700)),
-                                ),
-                              _Bubble(
-                                m: m,
-                                mine: mine,
-                                tight: older != null && older.senderId == m.senderId && !showTime,
-                                otherName: o.display,
-                                onActions: () => _actions(m),
-                              ),
-                              if (mine && (m.pending || seen || i == lastMineIdx))
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(top: 3, right: 6),
-                                    child: Text(m.pending ? 'Sending…' : (seen ? 'Seen' : 'Sent'), style: const TextStyle(color: C.inkSoft, fontSize: 11.5, fontWeight: FontWeight.w600)),
-                                  ),
-                                ),
-                            ]);
+                          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                          itemCount: _msgs.length,
+                          itemBuilder: (_, i) {
+                            final idx = _msgs.length - 1 - i;
+                            final m = _msgs[idx];
+                            final seen = idx == lastMineIdx && _otherReadAt != null && !_otherReadAt!.isBefore(m.createdAt);
+                            return _Bubble(
+                              message: m,
+                              mine: m.senderId == myId,
+                              seen: seen,
+                              onLongPress: () => _options(m),
+                              onDoubleTap: () => _react(m),
+                            );
                           },
                         ),
         ),
-        _composer(o),
-      ]),
-    );
-  }
-
-  String _stamp(DateTime t) {
-    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
-    final mm = t.minute.toString().padLeft(2, '0');
-    final ap = t.hour >= 12 ? 'PM' : 'AM';
-    final sameDay = DateTime.now().difference(t).inHours < 24 && DateTime.now().day == t.day;
-    return sameDay ? '$h:$mm $ap' : '${ago(t)} · $h:$mm $ap';
-  }
-
-  Widget _composer(UserLite o) {
-    final can = _input.text.trim().isNotEmpty;
-    return Container(
-      decoration: BoxDecoration(color: C.bg, boxShadow: [BoxShadow(color: C.shadowDark.withValues(alpha: .5), blurRadius: 14, offset: const Offset(0, -4))]),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            if (_replyTo != null)
-              Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
-                decoration: BoxDecoration(color: C.honeyPale, borderRadius: BorderRadius.circular(16)),
-                child: Row(children: [
-                  Expanded(
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(_replyTo!.senderId == myId ? 'Replying to yourself' : 'Replying to ${o.display}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: C.honeyDeep)),
-                      Text(_replyTo!.body, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
-                    ]),
-                  ),
-                  Press(onTap: () => setState(() => _replyTo = null), child: const Padding(padding: EdgeInsets.all(8), child: HIcon('close', size: 16, color: C.inkSoft))),
-                ]),
-              ),
-            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        if (_replyTo != null)
+          Container(
+            color: C.sunken,
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+            child: Row(children: [
+              const HIcon('reply', size: 18, color: C.honeyDeep),
+              const SizedBox(width: 8),
+              Expanded(child: Text(_replyTo!.body, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: C.inkSoft))),
+              IconButton(icon: const HIcon('close', size: 18, color: C.inkSoft), onPressed: () => setState(() => _replyTo = null)),
+            ]),
+          ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
               Expanded(
-                child: Focus(
-                  canRequestFocus: false,
-                  // desktop: Enter sends, Shift+Enter starts a new line
-                  onKeyEvent: (node, e) {
-                    if (isDesktop && e is KeyDownEvent && e.logicalKey == LogicalKeyboardKey.enter && !HardwareKeyboard.instance.isShiftPressed) {
-                      if (can) _send();
-                      return KeyEventResult.handled;
-                    }
-                    return KeyEventResult.ignored;
-                  },
-                  child: ClayField(controller: _input, hint: 'Message', maxLines: 5, minLines: 1, maxLength: 2000),
+                child: ClayField(
+                  controller: _input,
+                  hint: 'Message',
+                  maxLines: 5,
+                  minLines: 1,
+                  textInputAction: TextInputAction.newline,
                 ),
               ),
               const SizedBox(width: 10),
-              ClayIconButton(icon: can ? 'send_fill' : 'send', size: 50, bg: can ? C.honey : C.surface, onTap: can ? _send : null),
+              ClayIconButton(icon: 'send_fill', color: Colors.white, bg: C.honeyDeep, onTap: _send),
             ]),
-          ]),
+          ),
         ),
-      ),
+      ]),
     );
   }
 }
 
-class _SheetRow extends StatelessWidget {
-  const _SheetRow({required this.icon, required this.label, required this.onTap, this.danger = false});
-  final String icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool danger;
-  @override
-  Widget build(BuildContext context) => Press(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
-          child: Row(children: [
-            HIcon(icon, size: 22, color: danger ? C.rose : C.ink),
-            const SizedBox(width: 16),
-            Text(label, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15.5, color: danger ? C.rose : C.ink)),
-          ]),
-        ),
-      );
-}
-
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.m, required this.mine, required this.tight, required this.otherName, required this.onActions});
-  final Message m;
+  const _Bubble({required this.message, required this.mine, required this.seen, required this.onLongPress, required this.onDoubleTap});
+  final Message message;
   final bool mine;
-  final bool tight;
-  final String otherName;
-  final VoidCallback onActions;
+  final bool seen;
+  final VoidCallback onLongPress;
+  final VoidCallback onDoubleTap;
 
   @override
   Widget build(BuildContext context) {
-    final maxW = MediaQuery.sizeOf(context).width * .76;
-    final r = m.replyTo;
+    final m = message;
+    final fg = mine ? Colors.white : C.ink;
     final reactions = m.reactions.entries.where((e) => e.value > 0).toList();
-    final bg = m.deleted ? C.sunken : (mine ? C.honey : C.surface);
-
     return Padding(
-      padding: EdgeInsets.only(top: tight ? 3 : 10),
-      child: Align(
-        alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: maxW),
-          child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
-            Press(
-              onLongPress: onActions,
-              onTap: null,
-              scale: .985,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-                decoration: m.deleted
-                    ? BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20))
-                    : clayDeco(color: bg, radius: 20, depth: .4).copyWith(
-                        borderRadius: BorderRadius.only(
-                          topLeft: const Radius.circular(20),
-                          topRight: const Radius.circular(20),
-                          bottomLeft: Radius.circular(mine ? 20 : 6),
-                          bottomRight: Radius.circular(mine ? 6 : 20),
-                        ),
-                      ),
-                child: Opacity(
-                  opacity: m.pending ? .6 : 1,
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    if (r != null)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-                        decoration: BoxDecoration(
-                          color: (mine ? Colors.white : C.sunken).withValues(alpha: mine ? .45 : 1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text(r.senderId == myId ? 'You' : otherName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 11.5)),
-                          Text(r.deleted ? 'Message unsent' : r.body,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 12.5, fontStyle: r.deleted ? FontStyle.italic : FontStyle.normal)),
-                        ]),
-                      ),
-                    Text(
-                      m.deleted ? 'Message unsent' : m.body,
-                      style: TextStyle(fontSize: 15.5, height: 1.35, fontStyle: m.deleted ? FontStyle.italic : FontStyle.normal, color: m.deleted ? C.inkSoft : C.ink),
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Column(crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start, children: [
+        GestureDetector(
+          onLongPress: onLongPress,
+          onDoubleTap: onDoubleTap,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .76 > 460 ? 460 : MediaQuery.sizeOf(context).width * .76),
+            child: Stack(clipBehavior: Clip.none, children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                margin: EdgeInsets.only(bottom: reactions.isEmpty ? 0 : 10),
+                decoration: BoxDecoration(
+                  color: m.deleted ? C.sunken : (mine ? C.honeyDeep : C.surface),
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(20),
+                    topRight: const Radius.circular(20),
+                    bottomLeft: Radius.circular(mine ? 20 : 6),
+                    bottomRight: Radius.circular(mine ? 6 : 20),
+                  ),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                  if (m.replyTo != null && !m.deleted)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.only(left: 8),
+                      decoration: BoxDecoration(border: Border(left: BorderSide(color: mine ? Colors.white70 : C.honey, width: 3))),
+                      child: Text(m.replyTo!.deleted ? 'Message unsent' : m.replyTo!.body,
+                          maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12.5, color: fg.withValues(alpha: .8))),
                     ),
-                  ]),
-                ),
+                  Text(
+                    m.deleted ? 'Message unsent' : m.body,
+                    style: TextStyle(color: m.deleted ? C.inkSoft : fg, fontSize: 15.5, height: 1.3, fontStyle: m.deleted ? FontStyle.italic : FontStyle.normal),
+                  ),
+                ]),
               ),
-            ),
-            if (reactions.isNotEmpty)
-              Transform.translate(
-                offset: const Offset(0, -6),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: clayDeco(radius: 14, depth: .3),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    for (final e in reactions) ...[
-                      ReactionImg(e.key, size: 15),
-                      if (e.value > 1) Padding(padding: const EdgeInsets.only(left: 2, right: 4), child: Text('${e.value}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800))) else const SizedBox(width: 3),
-                    ],
-                  ]),
+              if (reactions.isNotEmpty)
+                Positioned(
+                  bottom: -2,
+                  right: mine ? 8 : null,
+                  left: mine ? null : 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(color: C.surface, borderRadius: BorderRadius.circular(12), border: Border.all(color: C.sunken)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      for (final e in reactions) ReactionImg(e.key, size: 15),
+                      if (m.reactions.values.fold<int>(0, (a, b) => a + b) > 1) ...[
+                        const SizedBox(width: 3),
+                        Text('${m.reactions.values.fold<int>(0, (a, b) => a + b)}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+                      ],
+                    ]),
+                  ),
                 ),
-              ),
-          ]),
+            ]),
+          ),
         ),
-      ),
+        Padding(
+          padding: const EdgeInsets.only(top: 2, left: 4, right: 4),
+          child: Text(m.pending ? 'Sending…' : (seen ? 'Seen · ${ago(m.createdAt)}' : ago(m.createdAt)), style: const TextStyle(fontSize: 11, color: C.inkSoft)),
+        ),
+      ]),
     );
   }
 }
