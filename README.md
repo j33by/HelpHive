@@ -117,3 +117,12 @@ Every icon is a PNG in `app/assets/icons/`, drawn by `app/tool/make_icons.py` (n
 ## Features
 
 Email and Google sign-in, profile with avatar, cover, bio, location, username; posts (create, edit, delete, photo, category, mark resolved); five reactions; comments with replies, edit, delete and reactions; friends (add, cancel, confirm, decline, remove); two-column people grid with filters; search for people and posts; notifications; direct messages with search, replies, reactions, unsend and seen marks; bottom navigation with badges.
+
+## Floating bubble and phone notifications
+
+- **Chat bubble**: a draggable chat head floats over the app (hidden on the Chats tab). It snaps to the screen edge, shows the unread count and the latest sender's picture, and pops a small preview when something arrives. Tap it for a panel with **Messages** (read the message, Like, Reply inline, Open) and **Alerts** (previews of friend requests, comments, reactions).
+- **Phone notification drawer (Android)**: new messages and alerts are posted as system notifications with the sender's picture, the full text preview and, for messages, **Like** and **Reply** buttons that work straight from the drawer. Icons come from `assets/icons` (copied into the Android drawable resources by `tool/patch_android.py`), not emoji.
+- **Sounds** (`assets/sounds`): `message.wav` for a new chat message, `alert.wav` for a new notification.
+- The app checks for news every 10 seconds while it is running (also in the background until Android stops it). Notifications that arrive while the app is fully closed need push (Firebase) and are not part of this.
+- Android 13+ asks for the notification permission on first sign-in.
+
