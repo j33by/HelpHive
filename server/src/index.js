@@ -10,6 +10,7 @@ import messages from './routes/messages.js';
 import notifications from './routes/notifications.js';
 import events from './routes/events.js';
 import account from './routes/account.js';
+import stars from './routes/stars.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -41,6 +42,7 @@ app.use(messages);
 app.use(notifications);
 app.use(events);
 app.use(account);
+app.use(stars);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found.' }));
 

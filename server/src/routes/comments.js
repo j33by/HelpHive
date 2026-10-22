@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
-import { getPost, loadProfiles } from '../supabase.js';
+import { getPost, loadProfiles, markResolved } from '../supabase.js';
+import { loadStars, withStars, badgeKey } from '../stars.js';
 import { notify } from '../notify.js';
 import { ah, HttpError, parse, reactionKind, text, uuid } from '../util.js';
 
@@ -17,10 +18,12 @@ const shapeComment = (row, users) => ({
   createdAt: row.created_at,
   reactionCount: row.reaction_count ?? 0,
   myReaction: row.my_reaction ?? null,
+  helpful: row.is_helpful ?? false,
+  helpfulAt: row.helpful_at ?? null,
 });
 
 const SELECT = `
-  select c.id, c.post_id, c.parent_id, c.user_id, c.body, c.edited, c.created_at,
+  select c.id, c.post_id, c.parent_id, c.user_id, c.body, c.edited, c.created_at, c.is_helpful, c.helpful_at,
          (select count(*)::int from comment_reactions r where r.comment_id = c.id) as reaction_count,
          (select r.kind from comment_reactions r where r.comment_id = c.id and r.user_id = $2) as my_reaction
   from comments c`;
@@ -28,7 +31,7 @@ const SELECT = `
 async function loadOne(id, me) {
   const { rows } = await query(`${SELECT} where c.id = $1`, [id, me]);
   if (!rows[0]) return null;
-  const users = await loadProfiles([rows[0].user_id]);
+  const users = await withStars(await loadProfiles([rows[0].user_id]));
   return shapeComment(rows[0], users);
 }
 
@@ -36,19 +39,33 @@ async function loadOne(id, me) {
 router.get('/posts/:postId/comments', ah(async (req, res) => {
   const postId = parse(uuid, req.params.postId);
   const { rows } = await query(`${SELECT} where c.post_id = $1 order by c.created_at asc limit 500`, [postId, req.user.id]);
-  const users = await loadProfiles(rows.map((r) => r.user_id));
+  const users = await withStars(await loadProfiles(rows.map((r) => r.user_id)));
   res.json({ comments: rows.map((r) => shapeComment(r, users)) });
 }));
 
-// Comment totals for a page of feed posts.
+// Comment totals for a page of feed posts, plus each post's helpful answer (if
+// the poster starred one) so a feed card can show it without opening the post.
 router.post('/comments/counts', ah(async (req, res) => {
   const { postIds } = parse(z.object({ postIds: z.array(uuid).max(50) }), req.body);
-  if (!postIds.length) return res.json({ counts: {} });
+  if (!postIds.length) return res.json({ counts: {}, helpful: {} });
   const { rows } = await query(
     'select post_id, count(*)::int as n from comments where post_id = any($1::uuid[]) group by post_id',
     [postIds],
   );
-  res.json({ counts: Object.fromEntries(rows.map((r) => [r.post_id, r.n])) });
+  const best = await query(
+    `select distinct on (post_id) id, post_id, user_id, body
+       from comments
+      where is_helpful and post_id = any($1::uuid[])
+      order by post_id, helpful_at asc nulls last, created_at asc`,
+    [postIds],
+  );
+  const users = await withStars(await loadProfiles(best.rows.map((r) => r.user_id)));
+  res.json({
+    counts: Object.fromEntries(rows.map((r) => [r.post_id, r.n])),
+    helpful: Object.fromEntries(
+      best.rows.map((r) => [r.post_id, { id: r.id, body: r.body.slice(0, 300), user: users.get(r.user_id) }]),
+    ),
+  });
 }));
 
 router.post('/posts/:postId/comments', ah(async (req, res) => {
@@ -147,6 +164,45 @@ router.put('/comments/:id/reaction', ah(async (req, res) => {
 
   const fresh = await loadOne(id, me);
   res.json({ reactionCount: fresh.reactionCount, myReaction: fresh.myReaction });
+}));
+
+// The poster stars a comment as helpful: one star for its author, a gold
+// highlight for everyone, and the post is marked resolved. Only the person who
+// wrote the post can do it, and never on their own comment.
+router.put('/comments/:id/helpful', ah(async (req, res) => {
+  const me = req.user.id;
+  const id = parse(uuid, req.params.id);
+  const { helpful } = parse(z.object({ helpful: z.boolean() }), req.body);
+
+  const { rows } = await query('select user_id, post_id, body from comments where id = $1', [id]);
+  const comment = rows[0];
+  if (!comment) throw new HttpError(404, 'Comment not found.');
+
+  const post = await getPost(comment.post_id);
+  if (!post) throw new HttpError(404, 'That post is gone.');
+  if (post.author_id !== me) throw new HttpError(403, 'Only the person who posted can mark a comment as helpful.');
+  if (comment.user_id === me) throw new HttpError(400, 'You cannot star your own comment.');
+
+  let postResolved = false;
+  if (helpful) {
+    const { rowCount } = await query(
+      'update comments set is_helpful = true, helpful_at = now() where id = $1 and not is_helpful',
+      [id],
+    );
+    if (rowCount) {
+      await notify({ userId: comment.user_id, actorId: me, type: 'comment_starred', postId: comment.post_id, commentId: id, snippet: comment.body });
+    }
+    postResolved = await markResolved(comment.post_id);
+  } else {
+    await query('update comments set is_helpful = false, helpful_at = null where id = $1', [id]);
+    await query(
+      `delete from notifications where user_id = $1 and actor_id = $2 and type = 'comment_starred' and comment_id = $3`,
+      [comment.user_id, me, id],
+    );
+  }
+
+  const stars = (await loadStars([comment.user_id])).get(comment.user_id) ?? 0;
+  res.json({ helpful, stars, badge: badgeKey(stars), postResolved });
 }));
 
 export default router;

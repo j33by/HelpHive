@@ -1,6 +1,6 @@
 -- HelpHive / Neon side
--- Holds: comments, comment reactions, conversations, messages, message
--- reactions and notifications. User and post ids are Supabase uuids; the API
+-- Holds: comments (incl. the "helpful" star), comment reactions, conversations,
+-- messages, message reactions and notifications. User and post ids are Supabase uuids; the API
 -- server checks them against Supabase before writing, so there are no foreign
 -- keys across the two databases.
 --
@@ -87,13 +87,37 @@ create table if not exists notifications (
   read_at     timestamptz,
   created_at  timestamptz not null default now(),
   constraint notifications_type check (type in
-    ('friend_request', 'friend_accepted', 'post_reaction', 'post_comment', 'comment_reply', 'comment_reaction')),
+    ('friend_request', 'friend_accepted', 'post_reaction', 'post_comment', 'comment_reply', 'comment_reaction', 'comment_starred')),
   constraint notifications_not_self check (user_id <> actor_id)
 );
 create index if not exists notifications_user_idx on notifications (user_id, created_at desc);
 
 -- reaction/friend events fire once per actor+target, so toggling a reaction
 -- on and off does not spam the owner
-create unique index if not exists notifications_once_uq
+-- (dropped and recreated so re-running this file picks up new types)
+drop index if exists notifications_once_uq;
+create unique index notifications_once_uq
   on notifications (user_id, actor_id, type, coalesce(post_id::text, ''), coalesce(comment_id::text, ''))
-  where type in ('friend_request', 'friend_accepted', 'post_reaction', 'comment_reaction');
+  where type in ('friend_request', 'friend_accepted', 'post_reaction', 'comment_reaction', 'comment_starred');
+
+-- ---------------------------------------------------------------------------
+-- helpful stars (added after the first release; safe on an existing database)
+--
+-- The person who wrote the post can star a comment as "helpful". Each starred
+-- comment is worth one star to its author. A user's star total is never stored:
+-- it is counted from their starred comments, so it can never drift (delete a
+-- comment or its post and the star goes with it).
+-- ---------------------------------------------------------------------------
+alter table comments add column if not exists is_helpful boolean not null default false;
+alter table comments add column if not exists helpful_at timestamptz;
+
+-- profile star totals and the "resolved comments" list
+create index if not exists comments_helpful_user_idx on comments (user_id, helpful_at desc) where is_helpful;
+-- the helpful answer preview on feed cards
+create index if not exists comments_helpful_post_idx on comments (post_id, helpful_at) where is_helpful;
+
+-- notifications created before 'comment_starred' existed keep working: the
+-- constraint above is only replaced here on databases that already had the table
+alter table notifications drop constraint if exists notifications_type;
+alter table notifications add constraint notifications_type check (type in
+  ('friend_request', 'friend_accepted', 'post_reaction', 'post_comment', 'comment_reply', 'comment_reaction', 'comment_starred'));
