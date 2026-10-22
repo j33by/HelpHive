@@ -7,6 +7,7 @@ import '../screens/profile.dart';
 import '../services/api.dart';
 import '../services/data.dart';
 import '../theme.dart';
+import 'badge.dart';
 import 'clay.dart';
 import 'reactions.dart';
 import '../layout.dart';
@@ -31,6 +32,25 @@ class CategoryTag extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// The comment the poster marked helpful, previewed on the feed card.
+class _HelpfulAnswer extends StatelessWidget {
+  const _HelpfulAnswer(this.h);
+  final HelpfulPreview h;
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+        decoration: helpfulDeco(),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const HelpfulTag(),
+          const SizedBox(height: 8),
+          NameLine(name: h.user.display, stars: h.user.stars, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+          const SizedBox(height: 2),
+          Text(h.body, maxLines: 4, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, height: 1.35)),
+        ]),
+      );
 }
 
 class PostCard extends StatefulWidget {
@@ -140,7 +160,7 @@ class _PostCardState extends State<PostCard> {
             child: Press(
               onTap: _openProfile,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(p.display, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                NameLine(name: p.display, stars: p.authorStars, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
                 Text('@${p.username} · ${ago(p.createdAt)}${p.edited ? ' · edited' : ''}',
                     maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: C.inkSoft, fontSize: 12.5)),
               ]),
@@ -197,6 +217,11 @@ class _PostCardState extends State<PostCard> {
               ),
             ),
           ),
+        ],
+        // the poster starred an answer: show it right here so anyone with the same problem sees it
+        if (!widget.detail && p.helpful != null) ...[
+          const SizedBox(height: 12),
+          _HelpfulAnswer(p.helpful!),
         ],
         const SizedBox(height: 10),
         Row(children: [

@@ -3,6 +3,7 @@ import '../models.dart';
 import '../services/api.dart';
 import '../services/data.dart';
 import '../theme.dart';
+import '../widgets/badge.dart';
 import '../widgets/clay.dart';
 import '../widgets/post_card.dart';
 import '../widgets/reactions.dart';
@@ -64,6 +65,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
         return;
       }
       post.commentCount = comments.length;
+      post.helpful = _firstHelpful(comments);
       setState(() {
         _post = post;
         _comments = comments;
@@ -79,6 +81,44 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   void _syncCount() => _post?.commentCount = _comments.length;
+
+  static HelpfulPreview? _firstHelpful(List<Comment> list) {
+    for (final c in list) {
+      if (c.helpful) return HelpfulPreview(id: c.id, body: c.body, user: c.user);
+    }
+    return null;
+  }
+
+  /// Poster only: star a comment as helpful (or take the star back).
+  Future<void> _toggleHelpful(Comment c) async {
+    final next = !c.helpful;
+    final before = c.user.badge;
+    setState(() => c.helpful = next);
+    try {
+      final r = await Api.setHelpful(c.id, next);
+      if (!mounted) return;
+      setState(() {
+        c.helpful = r.helpful;
+        for (final x in _comments) {
+          if (x.user.id == c.user.id) x.user.stars = r.stars;
+        }
+        if (r.postResolved) _post?.isResolved = true;
+        _post?.helpful = _firstHelpful(_comments);
+      });
+      final after = c.user.badge;
+      if (!r.helpful) {
+        toast(context, 'Star removed.');
+      } else if (after != null && after.key != before?.key) {
+        toast(context, '${c.user.display} earned a star and the ${after.name} badge!');
+      } else {
+        toast(context, '${c.user.display} earned a star. Thanks for saying it helped!');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => c.helpful = !next);
+      toast(context, friendly(e));
+    }
+  }
 
   Future<void> _send() async {
     final text = _input.text.trim();
@@ -116,6 +156,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
       setState(() {
         _comments.removeWhere((x) => x.id == c.id || x.parentId == c.id);
         _syncCount();
+        _post?.helpful = _firstHelpful(_comments);
       });
     } catch (e) {
       if (mounted) toast(context, friendly(e));
@@ -171,7 +212,9 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final roots = _comments.where((c) => c.parentId == null).toList();
+    final allRoots = _comments.where((c) => c.parentId == null).toList();
+    // starred answers first, so anyone with the same problem sees them straight away
+    final roots = [...allRoots.where((c) => c.helpful), ...allRoots.where((c) => !c.helpful)];
     final byParent = <String, List<Comment>>{};
     for (final c in _comments.where((c) => c.parentId != null)) {
       byParent.putIfAbsent(c.parentId!, () => []).add(c);
@@ -207,6 +250,20 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           ),
                           const SizedBox(height: 22),
                           Text(_comments.isEmpty ? 'Comments' : 'Comments · ${_comments.length}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                          if (postOwner && _comments.any((c) => c.user.id != myId) && !_comments.any((c) => c.helpful))
+                            Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: const [
+                                Icon(Icons.star_rounded, size: 18, color: C.honey),
+                                SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'Did someone solve it? Tap “Mark helpful” on their comment. They earn a star and everyone can see the answer.',
+                                    style: TextStyle(color: C.inkSoft, fontSize: 13, height: 1.35),
+                                  ),
+                                ),
+                              ]),
+                            ),
                           const SizedBox(height: 12),
                           if (_loading)
                             const Padding(padding: EdgeInsets.all(20), child: Center(child: CircularProgressIndicator()))
@@ -220,6 +277,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                               _CommentTile(
                                 c: c,
                                 canDelete: c.user.id == myId || postOwner,
+                                canStar: postOwner && c.user.id != myId,
+                                onStar: () => _toggleHelpful(c),
                                 onReact: (k) => _react(c, k),
                                 onReply: () => _startReply(c),
                                 onEdit: () => _startEdit(c),
@@ -232,6 +291,8 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                     c: r,
                                     small: true,
                                     canDelete: r.user.id == myId || postOwner,
+                                    canStar: postOwner && r.user.id != myId,
+                                    onStar: () => _toggleHelpful(r),
                                     onReact: (k) => _react(r, k),
                                     onReply: () => _startReply(r),
                                     onEdit: () => _startEdit(r),
@@ -293,10 +354,22 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
 }
 
 class _CommentTile extends StatelessWidget {
-  const _CommentTile({required this.c, required this.onReact, required this.onReply, required this.onEdit, required this.onDelete, required this.canDelete, this.small = false});
+  const _CommentTile({
+    required this.c,
+    required this.onReact,
+    required this.onReply,
+    required this.onEdit,
+    required this.onDelete,
+    required this.canDelete,
+    required this.onStar,
+    this.canStar = false,
+    this.small = false,
+  });
   final Comment c;
   final bool small;
   final bool canDelete;
+  final bool canStar;
+  final VoidCallback onStar;
   final ValueChanged<String?> onReact;
   final VoidCallback onReply;
   final VoidCallback onEdit;
@@ -318,9 +391,10 @@ class _CommentTile extends StatelessWidget {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Container(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-              decoration: BoxDecoration(color: C.sunken, borderRadius: BorderRadius.circular(18)),
+              decoration: c.helpful ? helpfulDeco() : BoxDecoration(color: C.sunken, borderRadius: BorderRadius.circular(18)),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(c.user.display, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5)),
+                if (c.helpful) ...[const HelpfulTag(), const SizedBox(height: 8)],
+                NameLine(name: c.user.display, stars: c.user.stars, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5)),
                 const SizedBox(height: 2),
                 Text(c.body, style: const TextStyle(height: 1.35, fontSize: 14.5)),
               ]),
@@ -347,6 +421,19 @@ class _CommentTile extends StatelessWidget {
                   ),
                 ),
                 Press(onTap: onReply, child: const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('Reply', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: C.inkSoft)))),
+                if (canStar)
+                  Press(
+                    onTap: onStar,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(c.helpful ? Icons.star_rounded : Icons.star_outline_rounded, size: 17, color: c.helpful ? C.honeyDeep : C.inkSoft),
+                        const SizedBox(width: 3),
+                        Text(c.helpful ? 'Unmark' : 'Mark helpful',
+                            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: c.helpful ? C.honeyDeep : C.inkSoft)),
+                      ]),
+                    ),
+                  ),
                 if (mine) Press(onTap: onEdit, child: const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('Edit', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: C.inkSoft)))),
                 if (canDelete) Press(onTap: onDelete, child: const Padding(padding: EdgeInsets.symmetric(vertical: 6), child: Text('Delete', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: C.rose)))),
                 if (c.reactionCount > 0)

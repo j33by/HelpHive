@@ -36,6 +36,8 @@ final navigatorKey = GlobalKey<NavigatorState>();
       return ('replied to your comment', q);
     case 'comment_reaction':
       return ('reacted to your comment', null);
+    case 'comment_starred':
+      return ('marked your comment as helpful and gave you a star', q);
     default:
       return ('did something', null);
   }

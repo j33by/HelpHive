@@ -1,14 +1,21 @@
+import 'badges.dart';
+
 const reactionKinds = ['like', 'love', 'haha', 'wow', 'sad'];
 
 DateTime _t(dynamic v) => DateTime.parse(v as String).toLocal();
 
 /// Name + picture, as the API server sends them with comments, messages and notifications.
 class UserLite {
-  UserLite({required this.id, required this.username, required this.fullName, this.avatarUrl});
+  UserLite({required this.id, required this.username, required this.fullName, this.avatarUrl, this.stars = 0});
   final String id;
   final String username;
   final String fullName;
   final String? avatarUrl;
+
+  /// Helpful stars this person has collected (0 when the server did not say).
+  int stars;
+
+  BadgeTier? get badge => badgeForStars(stars);
 
   String get display => fullName.trim().isEmpty ? username : fullName;
 
@@ -19,6 +26,7 @@ class UserLite {
           username: j['username'] as String? ?? '',
           fullName: j['fullName'] as String? ?? '',
           avatarUrl: j['avatarUrl'] as String?,
+          stars: (j['stars'] as num?)?.toInt() ?? 0,
         );
 }
 
@@ -36,6 +44,7 @@ class Profile {
     this.friendsCount = 0,
     this.friendshipId,
     this.relation = 'none',
+    this.stars = 0,
   });
   final String id;
   String username;
@@ -49,6 +58,11 @@ class Profile {
   int friendsCount;
   String? friendshipId;
   String relation; // self | none | friends | sent | received
+
+  /// Helpful stars collected. Filled in from the API server (not part of the Supabase row).
+  int stars;
+
+  BadgeTier? get badge => badgeForStars(stars);
 
   String get display => fullName.trim().isEmpty ? username : fullName;
 
@@ -118,6 +132,8 @@ class Post {
     required this.reactionCount,
     this.myReaction,
     this.commentCount = 0,
+    this.helpful,
+    this.authorStars = 0,
   });
   final String id;
   final String authorId;
@@ -134,6 +150,12 @@ class Post {
   int reactionCount;
   String? myReaction;
   int commentCount;
+
+  /// The comment the poster starred as helpful, if any (shown on the feed card).
+  HelpfulPreview? helpful;
+
+  /// Helpful stars the author has collected, for the badge beside their name.
+  int authorStars;
 
   String get display => fullName.trim().isEmpty ? username : fullName;
   bool get edited => updatedAt.difference(createdAt).inSeconds > 5;
@@ -170,6 +192,7 @@ class Comment {
     required this.createdAt,
     required this.reactionCount,
     this.myReaction,
+    this.helpful = false,
   });
   final String id;
   final String postId;
@@ -181,6 +204,9 @@ class Comment {
   int reactionCount;
   String? myReaction;
 
+  /// The poster starred this comment as helpful.
+  bool helpful;
+
   factory Comment.fromJson(Map<String, dynamic> j) => Comment(
         id: j['id'] as String,
         postId: j['postId'] as String,
@@ -191,7 +217,62 @@ class Comment {
         createdAt: _t(j['createdAt']),
         reactionCount: (j['reactionCount'] as num?)?.toInt() ?? 0,
         myReaction: j['myReaction'] as String?,
+        helpful: j['helpful'] as bool? ?? false,
       );
+}
+
+/// The starred comment shown under a post in the feed.
+class HelpfulPreview {
+  HelpfulPreview({required this.id, required this.body, required this.user});
+  final String id;
+  final String body;
+  final UserLite user;
+
+  factory HelpfulPreview.fromJson(Map<String, dynamic> j) => HelpfulPreview(
+        id: j['id'] as String,
+        body: j['body'] as String? ?? '',
+        user: UserLite.fromJson(j['user'] as Map<String, dynamic>?),
+      );
+}
+
+/// One entry of a profile's "Resolved" tab: a comment that got a star and the post it answered.
+class ResolvedItem {
+  ResolvedItem({
+    required this.commentId,
+    required this.commentBody,
+    required this.helpfulAt,
+    required this.postId,
+    required this.postBody,
+    required this.category,
+    required this.hasImage,
+    required this.postCreatedAt,
+    required this.author,
+  });
+  final String commentId;
+  final String commentBody;
+  final DateTime helpfulAt;
+  final String postId;
+  final String postBody;
+  final String category;
+  final bool hasImage;
+  final DateTime postCreatedAt;
+  final UserLite author;
+
+  factory ResolvedItem.fromJson(Map<String, dynamic> j) {
+    final c = j['comment'] as Map<String, dynamic>;
+    final p = j['post'] as Map<String, dynamic>;
+    return ResolvedItem(
+      commentId: c['id'] as String,
+      commentBody: c['body'] as String? ?? '',
+      helpfulAt: _t(c['helpfulAt'] ?? c['createdAt']),
+      postId: p['id'] as String,
+      postBody: p['body'] as String? ?? '',
+      category: p['category'] as String? ?? 'general',
+      hasImage: p['hasImage'] as bool? ?? false,
+      postCreatedAt: _t(p['createdAt']),
+      author: UserLite.fromJson(p['author'] as Map<String, dynamic>?),
+    );
+  }
 }
 
 class Conversation {

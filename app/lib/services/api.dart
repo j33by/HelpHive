@@ -85,6 +85,16 @@ class Api {
     return (r['counts'] as Map).map((k, v) => MapEntry(k as String, (v as num).toInt()));
   }
 
+  /// Comment totals and each post's helpful answer, for a page of feed posts.
+  static Future<({Map<String, int> counts, Map<String, HelpfulPreview> helpful})> postExtras(List<String> postIds) async {
+    if (postIds.isEmpty) return (counts: <String, int>{}, helpful: <String, HelpfulPreview>{});
+    final r = await _send('POST', '/comments/counts', body: {'postIds': postIds}) as Map<String, dynamic>;
+    return (
+      counts: ((r['counts'] as Map?) ?? const {}).map((k, v) => MapEntry(k as String, (v as num).toInt())),
+      helpful: ((r['helpful'] as Map?) ?? const {}).map((k, v) => MapEntry(k as String, HelpfulPreview.fromJson(v as Map<String, dynamic>))),
+    );
+  }
+
   static Future<Comment> addComment(String postId, String body, {String? parentId}) async {
     final r = await _send('POST', '/posts/$postId/comments', body: {'body': body, if (parentId != null) 'parentId': parentId});
     return Comment.fromJson((r as Map<String, dynamic>)['comment'] as Map<String, dynamic>);
@@ -98,6 +108,37 @@ class Api {
   static Future<void> deleteComment(String id) => _send('DELETE', '/comments/$id');
 
   static Future<void> reactComment(String id, String? kind) => _send('PUT', '/comments/$id/reaction', body: {'kind': kind});
+
+  // helpful stars. Only the poster can star a comment (the server checks).
+  static Future<({bool helpful, int stars, bool postResolved})> setHelpful(String commentId, bool helpful) async {
+    final r = await _send('PUT', '/comments/$commentId/helpful', body: {'helpful': helpful}) as Map<String, dynamic>;
+    return (
+      helpful: r['helpful'] as bool? ?? helpful,
+      stars: (r['stars'] as num?)?.toInt() ?? 0,
+      postResolved: r['postResolved'] as bool? ?? false,
+    );
+  }
+
+  static Future<int> userStars(String userId) async {
+    final r = await _send('GET', '/users/$userId/stars') as Map<String, dynamic>;
+    return (r['stars'] as num?)?.toInt() ?? 0;
+  }
+
+  static Future<Map<String, int>> starsFor(List<String> userIds) async {
+    final ids = userIds.toSet().toList();
+    if (ids.isEmpty) return {};
+    final r = await _send('POST', '/users/stars', body: {'userIds': ids}) as Map<String, dynamic>;
+    return ((r['stars'] as Map?) ?? const {}).map((k, v) => MapEntry(k as String, (v as num).toInt()));
+  }
+
+  /// Comments this person got starred, newest star first, each with its post.
+  static Future<({List<ResolvedItem> items, bool hasMore})> resolved(String userId, {DateTime? before}) async {
+    final r = await _send('GET', '/users/$userId/resolved', query: {if (before != null) 'before': before.toUtc().toIso8601String()}) as Map<String, dynamic>;
+    return (
+      items: (r['items'] as List).map((e) => ResolvedItem.fromJson(e as Map<String, dynamic>)).toList(),
+      hasMore: r['hasMore'] as bool? ?? false,
+    );
+  }
 
   // conversations + messages
   static Future<List<Conversation>> conversations() async {

@@ -71,14 +71,28 @@ class Data {
   }
 
   static Future<void> _attachCounts(List<Post> posts) async {
-    try {
-      final counts = await Api.commentCounts(posts.map((p) => p.id).toList());
-      for (final p in posts) {
-        p.commentCount = counts[p.id] ?? 0;
-      }
-    } catch (_) {
-      // the feed is still useful without comment totals
-    }
+    if (posts.isEmpty) return;
+    // comment totals + helpful answers, and the authors' star totals; each part
+    // is optional, the feed is still useful without them
+    await Future.wait([
+      () async {
+        try {
+          final x = await Api.postExtras(posts.map((p) => p.id).toList());
+          for (final p in posts) {
+            p.commentCount = x.counts[p.id] ?? 0;
+            p.helpful = x.helpful[p.id];
+          }
+        } catch (_) {}
+      }(),
+      () async {
+        try {
+          final stars = await Api.starsFor(posts.map((p) => p.authorId).toList());
+          for (final p in posts) {
+            p.authorStars = stars[p.authorId] ?? 0;
+          }
+        } catch (_) {}
+      }(),
+    ]);
   }
 
   static Future<void> createPost({required String body, required String category, Uint8List? image, String? ext}) async {
@@ -135,7 +149,13 @@ class Data {
   static Future<Profile> profile(String id) async {
     final rows = await sb.rpc('get_profile_card', params: {'p_id': id}) as List;
     if (rows.isEmpty) throw ApiException('That profile could not be found.', 404);
-    return Profile.fromRow(rows.first as Map<String, dynamic>);
+    final profile = Profile.fromRow(rows.first as Map<String, dynamic>);
+    try {
+      profile.stars = await Api.userStars(id);
+    } catch (_) {
+      // stars come from the API server; the profile is still worth showing without them
+    }
+    return profile;
   }
 
   // ---- friendships; each change is followed by a ping so the server can notify
