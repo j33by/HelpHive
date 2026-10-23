@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_state.dart';
 import '../config.dart';
@@ -133,7 +134,12 @@ Future<void> listenerMain(ServiceInstance service) async {
     await _ensureBackend();
     await l.init();
   } catch (_) {}
-  Timer.periodic(const Duration(seconds: 8), (_) => l.tick());
+  var beats = 0;
+  Timer.periodic(const Duration(seconds: 1), (_) {
+    beats++;
+    if (beats % 8 == 0) l.tick();
+    l.panelPulse();
+  });
   l.tick();
 }
 
@@ -169,6 +175,152 @@ class _Listener {
     await _plugin.initialize(const InitializationSettings(android: AndroidInitializationSettings('ic_stat_chat')));
   }
 
+  // ---- the bubble's pop-up chat window --------------------------------------
+  // The window is drawn natively and only draws: this isolate (which holds the
+  // session) fetches what it shows and sends what is typed in it. They talk
+  // through shared preferences: "bubble_panel" (open? which chat?), "bubble_out"
+  // (messages typed, with ids), "bubble_convs" and "bubble_thread" (what to draw).
+
+  bool _panelActive = false;
+  String? _panelConv; // chat open in the window, null while it shows the list
+  bool _panelBusy = false;
+  int _pulseN = 0;
+  int _outAck = -1;
+  String? _fetchedConv;
+  String? _lastIncomingId;
+  DateTime _lastThread = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastList = DateTime.fromMillisecondsSinceEpoch(0);
+  final List<String> _acked = [];
+  final List<String> _failed = [];
+
+  List<Map<String, dynamic>> _convJson(List<Conversation> cs) => [
+        for (final c in cs.take(25))
+          {
+            'id': c.id,
+            'name': c.user.display,
+            'avatar': c.user.avatarUrl,
+            'last': c.lastDeleted ? 'Message removed' : '${c.lastMine ? 'You: ' : ''}${c.lastBody}',
+            'unread': c.unread,
+            'at': c.lastAt.millisecondsSinceEpoch,
+            'u': _userJson(c.user),
+          },
+      ];
+
+  Map<String, dynamic>? _decode(String? raw) {
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final v = jsonDecode(raw);
+      return v is Map<String, dynamic> ? v : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<Map<String, dynamic>> _decodeList(String? raw) {
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final v = jsonDecode(raw);
+      return v is List ? [for (final e in v) if (e is Map<String, dynamic>) e] : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Runs every second. Cheap when the window is closed (looks every other second).
+  Future<void> panelPulse() async {
+    _pulseN++;
+    if (!_panelActive && _pulseN.isOdd) return;
+    if (_panelBusy) return;
+    _panelBusy = true;
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.reload();
+      final st = _decode(p.getString('bubble_panel'));
+      final ts = (st?['ts'] as num?)?.toInt() ?? 0;
+      // the window refreshes "ts" every few seconds; an old one means it is gone
+      final open = st != null && st['open'] == true && DateTime.now().millisecondsSinceEpoch - ts < 20000;
+      _panelActive = open;
+      _panelConv = open ? st?['conv'] as String? : null;
+      if (!open) {
+        _fetchedConv = null;
+        return;
+      }
+      if (!await _syncSession()) return;
+
+      // 1. messages typed in the window
+      var force = false;
+      if (_outAck < 0) _outAck = p.getInt('bubble_out_ack') ?? 0;
+      final out = _decodeList(p.getString('bubble_out'))..sort((a, b) => ((a['seq'] as num?) ?? 0).compareTo((b['seq'] as num?) ?? 0));
+      for (final o in out) {
+        final seq = (o['seq'] as num?)?.toInt() ?? 0;
+        if (seq <= _outAck) continue;
+        final cid = o['cid'] as String? ?? '';
+        try {
+          if (o['type'] == 'send') {
+            await Api.sendMessage(o['conv'] as String, (o['body'] as String).trim());
+            _acked.add(cid);
+            force = true;
+          }
+        } catch (_) {
+          _failed.add(cid);
+        }
+        _outAck = seq;
+        await p.setInt('bubble_out_ack', seq);
+      }
+      while (_acked.length > 30) {
+        _acked.removeAt(0);
+      }
+      while (_failed.length > 30) {
+        _failed.removeAt(0);
+      }
+
+      // 2. what the window should show
+      final conv = _panelConv;
+      final now = DateTime.now();
+      if (conv != null) {
+        _lastList = DateTime.fromMillisecondsSinceEpoch(0); // back at the list, refresh at once
+        if (force || _fetchedConv != conv || now.difference(_lastThread) >= const Duration(milliseconds: 2800)) {
+          await _publishThread(conv);
+        }
+      } else {
+        _fetchedConv = null;
+        if (force || now.difference(_lastList) >= const Duration(seconds: 5)) {
+          _lastList = now;
+          await Bubble.publishConvs(_convJson(await Api.conversations()));
+        }
+      }
+    } catch (_) {
+      // transient; the next pulse tries again
+    } finally {
+      _panelBusy = false;
+    }
+  }
+
+  Future<void> _publishThread(String conv) async {
+    if (_fetchedConv != conv) _lastIncomingId = null;
+    final r = await Api.messages(conv);
+    _fetchedConv = conv;
+    _lastThread = DateTime.now();
+    final me = Supabase.instance.client.auth.currentUser?.id;
+    final msgs = r.messages.length > 40 ? r.messages.sublist(r.messages.length - 40) : r.messages;
+
+    // reading it in the window counts as reading it
+    final incoming = msgs.where((m) => m.senderId != me && !m.deleted).lastOrNull;
+    if (incoming != null && incoming.id != _lastIncomingId) {
+      _lastIncomingId = incoming.id;
+      Api.markRead(conv).catchError((_) {});
+    }
+
+    await Bubble.publishThread({
+      'conv': conv,
+      'acked': List<String>.of(_acked),
+      'failed': List<String>.of(_failed),
+      'messages': [
+        for (final m in msgs) {'id': m.id, 'mine': m.senderId == me, 'body': m.body, 'deleted': m.deleted, 'at': m.createdAt.millisecondsSinceEpoch},
+      ],
+    });
+  }
+
   Future<void> tick() async {
     if (_busy) return;
     _busy = true;
@@ -185,7 +337,7 @@ class _Listener {
         for (final c in convs) {
           final seen = _seenConv[c.id];
           final fresh = c.unread > 0 && !c.lastMine && !c.lastDeleted && (seen == null || c.lastAt.millisecondsSinceEpoch > seen);
-          if (fresh && !(_appOpen && c.id == _activeConv)) newMsgs.add(c);
+          if (fresh && !(_appOpen && c.id == _activeConv) && !(_panelActive && c.id == _panelConv)) newMsgs.add(c);
         }
         for (final n in ns) {
           if (!n.read && !_seenNotif.contains(n.id) && n.actor.id.isNotEmpty && !(_appOpen && _tab == 2)) newNotifs.add(n);
@@ -223,7 +375,14 @@ class _Listener {
       }
       if (newMsgs.isNotEmpty) {
         final c = newMsgs.first;
-        preview = {'title': c.user.display, 'text': c.lastBody, 'avatar': c.user.avatarUrl, 'tick': DateTime.now().millisecondsSinceEpoch};
+        preview = {
+          'title': c.user.display,
+          'text': c.lastBody,
+          'avatar': c.user.avatarUrl,
+          'conv': c.id,
+          'u': _userJson(c.user),
+          'tick': DateTime.now().millisecondsSinceEpoch,
+        };
         latest = jsonEncode({'k': 'msg', 'c': c.id, 'u': _userJson(c.user)});
       } else if (newNotifs.isNotEmpty) {
         final n = newNotifs.first;
@@ -235,6 +394,7 @@ class _Listener {
         head: unreadConv == null ? {} : {'name': unreadConv.user.display, 'avatar': unreadConv.user.avatarUrl},
         preview: preview,
         latest: latest,
+        convs: _convJson(convs),
       );
 
       // ---- phone drawer + tones

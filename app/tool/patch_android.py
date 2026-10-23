@@ -108,6 +108,8 @@ for src_name, res_name in (
     ('reply.png', 'ic_action_reply.png'),
     ('bee.png', 'ic_large_bee.png'),
     ('close.png', 'ic_bubble_close.png'),
+    ('back.png', 'ic_panel_back.png'),      # chat window: back to the chat list
+    ('send_fill.png', 'ic_panel_send.png'),  # chat window: send button
     ('bell_fill.png', 'ic_bg_service_small.png'),  # icon of the quiet listener notification
 ):
     shutil.copyfile(os.path.join(icons, src_name), os.path.join(drawable, res_name))

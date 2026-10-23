@@ -10,6 +10,8 @@ import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.text.InputFilter
+import android.text.InputType
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -18,15 +20,22 @@ import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewOutlineProvider
+import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
 import kotlin.math.abs
@@ -37,6 +46,13 @@ import kotlin.math.hypot
  * Drag it anywhere; while dragging an X target appears at the bottom centre and
  * dropping the bubble on it removes the bubble (and switches it off in settings).
  * It is fed through the Flutter shared preferences by the background listener.
+ *
+ * Tapping the bubble opens a small chat window over whatever app is in front (the
+ * chat list, and a conversation behind a back arrow). Tapping the bubble again hides
+ * it; the bubble itself stays draggable, and still goes away when dropped on the X.
+ * The window only draws. The Dart listener (which holds the signed-in session) does
+ * the network work: it publishes the chat list and the open conversation into shared
+ * preferences, and picks up the messages typed here from the "bubble_out" queue.
  */
 class BubbleService : Service() {
     private lateinit var wm: WindowManager
@@ -197,7 +213,7 @@ class BubbleService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!moved) {
-                        openApp()
+                        togglePanel()
                     } else if (overClose) {
                         hideClose()
                         removeForGood()
@@ -302,6 +318,8 @@ class BubbleService : Service() {
             "flutter.bubble_unread" -> updateBadge()
             "flutter.bubble_head" -> updateHead()
             "flutter.bubble_preview" -> showPreview()
+            "flutter.bubble_convs" -> if (panelOpen && panelConv == null) renderList()
+            "flutter.bubble_thread" -> if (panelOpen && panelConv != null) renderThread()
         }
     }
 
@@ -357,8 +375,9 @@ class BubbleService : Service() {
         val tick = j.optLong("tick", 0L)
         if (tick <= lastPreviewTick) return
         lastPreviewTick = tick
-        dropPreview()
         pulse()
+        if (panelOpen) return // the chat window already shows what is new
+        dropPreview()
 
         val onRight = lp0.x + bubbleSize / 2 > screenW / 2
         val card = LinearLayout(this).apply {
@@ -388,7 +407,11 @@ class BubbleService : Service() {
             ellipsize = android.text.TextUtils.TruncateAt.END
             maxWidth = dp(210)
         })
-        card.setOnClickListener { dropPreview(); openApp() }
+        card.setOnClickListener {
+            dropPreview()
+            val conv = j.optString("conv", "")
+            if (conv.isNotEmpty()) openPanel(conv, j.optJSONObject("u")) else openApp()
+        }
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, overlayType(),
@@ -422,16 +445,579 @@ class BubbleService : Service() {
         }?.start()
     }
 
-    private fun openApp() {
+    private fun openApp(payload: String? = null) {
         dropPreview()
         val i = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra("hh_payload", prefs.getString("flutter.bubble_latest", "") ?: "")
+            putExtra("hh_payload", payload ?: (prefs.getString("flutter.bubble_latest", "") ?: ""))
         }
         try { startActivity(i) } catch (_: Exception) {}
     }
 
+
+    // =====================================================================
+    // The chat window
+    // =====================================================================
+    private class Pending(val cid: String, val conv: String, val body: String, val at: Long)
+
+    private val ink = 0xFF3A2E24.toInt()
+    private val inkSoft = 0xFF8A7A6A.toInt()
+    private val surface = 0xFFFBF7F0.toInt()
+    private val sunken = 0xFFEDE3D4.toInt()
+    private val honey = 0xFFF2B33D.toInt()
+    private val honeyPale = 0xFFFCE9BE.toInt()
+    private val rose = 0xFFD9694F.toInt()
+
+    private var panel: FrameLayout? = null
+    private var panelLp: WindowManager.LayoutParams? = null
+    private var panelOpen = false
+    private var panelConv: String? = null      // null = the chat list
+    private var panelUser: JSONObject? = null
+    private var titleView: TextView? = null
+    private var backBtn: ImageView? = null
+    private var headAvatar: ImageView? = null
+    private var listScroll: ScrollView? = null
+    private var listBox: LinearLayout? = null
+    private var threadScroll: ScrollView? = null
+    private var threadBox: LinearLayout? = null
+    private var composer: LinearLayout? = null
+    private var input: EditText? = null
+    private val pending = ArrayList<Pending>()
+    private var lastListRaw = ""
+    private var lastThreadSig = ""
+    private var outSeq = 0L
+    private var lastIme = 0
+    private val avatarCache = HashMap<String, Bitmap>()
+
+    /** Tells the listener the window is open (and which chat), refreshed every few seconds. */
+    private val beat = object : Runnable {
+        override fun run() {
+            if (!panelOpen) return
+            publishPanel()
+            handler.postDelayed(this, 5000)
+        }
+    }
+
+    private fun rounded(fill: Int, radiusDp: Int, stroke: Int? = null) = GradientDrawable().apply {
+        cornerRadius = dp(radiusDp).toFloat()
+        setColor(fill)
+        if (stroke != null) setStroke(dp(1), stroke)
+    }
+
+    private fun icon(name: String, tint: Int, sizeDp: Int, padDp: Int) = ImageView(this).apply {
+        val id = drawable(name)
+        if (id != 0) setImageResource(id)
+        setColorFilter(tint)
+        setPadding(dp(padDp), dp(padDp), dp(padDp), dp(padDp))
+        layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+        isClickable = true
+    }
+
+    private fun circleAvatar(sizeDp: Int) = ImageView(this).apply {
+        scaleType = ImageView.ScaleType.CENTER_CROP
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(honey) }
+        clipToOutline = true
+        outlineProvider = ViewOutlineProvider.BACKGROUND
+        layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+    }
+
+    private fun setAvatar(iv: ImageView, url: String?, sizeDp: Int) {
+        val bee = drawable("ic_large_bee")
+        val pad = dp(sizeDp / 5)
+        iv.tag = url
+        val cached = if (url != null) avatarCache[url] else null
+        if (cached != null) {
+            iv.setPadding(0, 0, 0, 0)
+            iv.setImageBitmap(cached)
+            return
+        }
+        if (bee != 0) iv.setImageResource(bee)
+        iv.setPadding(pad, pad, pad, pad)
+        if (url == null || !url.startsWith("http")) return
+        Thread {
+            try {
+                val c = URL(url).openConnection().apply { connectTimeout = 5000; readTimeout = 5000 }
+                var bmp: Bitmap? = c.getInputStream().use { BitmapFactory.decodeStream(it) }
+                if (bmp != null) {
+                    val sc = 128f / minOf(bmp.width, bmp.height)
+                    if (sc < 1f) bmp = Bitmap.createScaledBitmap(bmp, (bmp.width * sc).toInt(), (bmp.height * sc).toInt(), true)
+                    val done = bmp
+                    handler.post {
+                        if (done != null) avatarCache[url] = done
+                        if (iv.tag == url && done != null) {
+                            iv.setPadding(0, 0, 0, 0)
+                            iv.setImageBitmap(done)
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }.start()
+    }
+
+    private fun label(text: String, sp: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+        this.text = text
+        setTextColor(color)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+        if (bold) setTypeface(typeface, Typeface.BOLD)
+    }
+
+    private fun emptyText(msg: String) = label(msg, 14f, inkSoft).apply {
+        gravity = Gravity.CENTER
+        setPadding(dp(28), dp(48), dp(28), dp(28))
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun topInset(): Int {
+        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (id > 0) resources.getDimensionPixelSize(id) else dp(24)
+    }
+
+    private fun panelWidth() = minOf(screenW - dp(20), dp(380))
+
+    private fun panelHeight(): Int {
+        val wanted = minOf((screenH * 0.58f).toInt(), dp(520))
+        val room = screenH - topInset() - dp(24) - lastIme
+        return minOf(wanted, room).coerceAtLeast(dp(220))
+    }
+
+    private fun resizePanel() {
+        val v = panel ?: return
+        val lp = panelLp ?: return
+        lp.height = panelHeight()
+        try { wm.updateViewLayout(v, lp) } catch (_: Exception) {}
+    }
+
+    private fun setFocusable(on: Boolean) {
+        val v = panel ?: return
+        val lp = panelLp ?: return
+        lp.flags = if (on) lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        else lp.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        try { wm.updateViewLayout(v, lp) } catch (_: Exception) {}
+    }
+
+    private fun hideIme() {
+        val v = input ?: return
+        try {
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(v.windowToken, 0)
+        } catch (_: Exception) {}
+        v.clearFocus()
+    }
+
+    private fun publishPanel() {
+        val j = JSONObject()
+            .put("open", panelOpen)
+            .put("conv", panelConv ?: JSONObject.NULL)
+            .put("ts", System.currentTimeMillis())
+        prefs.edit().putString("flutter.bubble_panel", j.toString()).apply()
+    }
+
+    private fun enqueue(conv: String, body: String, cid: String) {
+        val ack = try { prefs.getLong("flutter.bubble_out_ack", 0L) } catch (_: Exception) { 0L }
+        val keep = JSONArray()
+        try {
+            val old = JSONArray(prefs.getString("flutter.bubble_out", "[]") ?: "[]")
+            for (i in 0 until old.length()) {
+                val o = old.getJSONObject(i)
+                if (o.optLong("seq") > ack) keep.put(o)
+            }
+        } catch (_: Exception) {}
+        outSeq = maxOf(System.currentTimeMillis(), outSeq + 1)
+        keep.put(JSONObject().put("seq", outSeq).put("type", "send").put("conv", conv).put("body", body).put("cid", cid))
+        prefs.edit().putString("flutter.bubble_out", keep.toString()).apply()
+    }
+
+    private fun togglePanel() {
+        if (panelOpen) closePanel() else openPanel()
+    }
+
+    private fun openPanel(convId: String? = null, user: JSONObject? = null) {
+        dropPreview()
+        if (panelOpen) {
+            if (convId != null) openThread(convId, user)
+            return
+        }
+        lastIme = 0
+        buildPanel()
+        val v = panel ?: return
+        panelOpen = true
+        lastListRaw = ""
+        lastThreadSig = ""
+        if (convId != null) openThread(convId, user) else showList()
+        handler.removeCallbacks(beat)
+        handler.postDelayed(beat, 5000)
+        v.alpha = 0f
+        v.translationY = -dp(10).toFloat()
+        v.animate().alpha(1f).translationY(0f).setDuration(160).start()
+        // the window was added after the bubble; put the bubble back on top so it can still be dragged
+        handler.post {
+            val b = bubble
+            val blp = bubbleLp
+            if (panelOpen && b != null && blp != null) {
+                try {
+                    wm.removeView(b)
+                    wm.addView(b, blp)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun closePanel() {
+        val v = panel ?: return
+        hideIme()
+        handler.removeCallbacks(beat)
+        panelOpen = false
+        panelConv = null
+        panelUser = null
+        panel = null
+        panelLp = null
+        pending.clear()
+        publishPanel()
+        v.animate().alpha(0f).translationY(-dp(10).toFloat()).setDuration(130).withEndAction {
+            try { wm.removeView(v) } catch (_: Exception) {}
+        }.start()
+    }
+
+    /** No animation: used when the whole service goes away. */
+    private fun closePanelNow() {
+        handler.removeCallbacks(beat)
+        val v = panel
+        val wasOpen = panelOpen
+        panelOpen = false
+        panelConv = null
+        panelUser = null
+        panel = null
+        panelLp = null
+        if (v != null) try { wm.removeView(v) } catch (_: Exception) {}
+        if (wasOpen) publishPanel()
+    }
+
+    private fun buildPanel() {
+        val self = this@BubbleService
+        val root = object : FrameLayout(self) {
+            override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+                if (e.keyCode == KeyEvent.KEYCODE_BACK) {
+                    if (e.action == KeyEvent.ACTION_UP) {
+                        if (panelConv != null) showList() else closePanel()
+                    }
+                    return true
+                }
+                return super.dispatchKeyEvent(e)
+            }
+        }.apply {
+            background = rounded(surface, 22, sunken)
+            clipToOutline = true
+            outlineProvider = ViewOutlineProvider.BACKGROUND
+            elevation = dp(10).toFloat()
+        }
+        val column = LinearLayout(self).apply { orientation = LinearLayout.VERTICAL }
+
+        // ---- header: [back] [picture] name ........ Open app  X
+        val header = LinearLayout(self).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), dp(8), dp(8), dp(8))
+            setBackgroundColor(honeyPale)
+        }
+        val back = icon("ic_panel_back", ink, 40, 10).apply {
+            visibility = View.GONE
+            setOnClickListener { showList() }
+        }
+        val av = circleAvatar(34)
+        val title = label("Chats", 16f, ink, bold = true).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8); marginEnd = dp(8) }
+        }
+        val openLink = label("Open app", 12.5f, 0xFFD9961A.toInt(), bold = true).apply {
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setOnClickListener { openChatInApp() }
+        }
+        val close = icon("ic_bubble_close", ink, 34, 8).apply { setOnClickListener { closePanel() } }
+        header.addView(back)
+        header.addView(av)
+        header.addView(title)
+        header.addView(openLink)
+        header.addView(close)
+        column.addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        // ---- body: chat list or conversation
+        val body = FrameLayout(self)
+        val lBox = LinearLayout(self).apply { orientation = LinearLayout.VERTICAL }
+        val lScroll = ScrollView(self).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(lBox, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        }
+        val tBox = LinearLayout(self).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val tScroll = ScrollView(self).apply {
+            isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            visibility = View.GONE
+            addView(tBox, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        }
+        body.addView(lScroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        body.addView(tScroll, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        column.addView(body, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // ---- composer (conversation only)
+        val et = EditText(self).apply {
+            hint = "Message"
+            setHintTextColor(inkSoft)
+            setTextColor(ink)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+            background = rounded(sunken, 20)
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            maxLines = 4
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            filters = arrayOf(InputFilter.LengthFilter(2000))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            // before Android 11 the window is not told where the keyboard is, so make room by hand
+            setOnFocusChangeListener { _, has ->
+                if (Build.VERSION.SDK_INT < 30) {
+                    lastIme = if (has) (screenH * 0.42f).toInt() else 0
+                    resizePanel()
+                }
+            }
+        }
+        val send = icon("ic_panel_send", ink, 42, 10).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(honey) }
+            setOnClickListener { doSend() }
+        }
+        val bar = LinearLayout(self).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(10))
+            setBackgroundColor(surface)
+            visibility = View.GONE
+        }
+        bar.addView(et)
+        bar.addView(send, LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginStart = dp(8) })
+        column.addView(bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        root.addView(column, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+
+        if (Build.VERSION.SDK_INT >= 30) {
+            root.setOnApplyWindowInsetsListener { _, insets ->
+                val ime = insets.getInsets(WindowInsets.Type.ime()).bottom
+                if (ime != lastIme) {
+                    lastIme = ime
+                    handler.post { resizePanel() }
+                }
+                insets
+            }
+        }
+
+        val lp = WindowManager.LayoutParams(
+            panelWidth(), panelHeight(), overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = topInset() + dp(8)
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+        try {
+            wm.addView(root, lp)
+        } catch (_: Exception) {
+            return
+        }
+        panel = root; panelLp = lp
+        titleView = title; backBtn = back; headAvatar = av
+        listScroll = lScroll; listBox = lBox
+        threadScroll = tScroll; threadBox = tBox
+        composer = bar; input = et
+    }
+
+    // ---- switching between the list and a conversation
+    private fun showList() {
+        panelConv = null
+        panelUser = null
+        hideIme()
+        titleView?.text = "Chats"
+        backBtn?.visibility = View.GONE
+        headAvatar?.let { setAvatar(it, null, 34) }
+        listScroll?.visibility = View.VISIBLE
+        threadScroll?.visibility = View.GONE
+        composer?.visibility = View.GONE
+        setFocusable(false)
+        publishPanel()
+        renderList()
+    }
+
+    private fun openThread(convId: String, user: JSONObject?) {
+        var u = user
+        if (u == null) u = findConv(convId)?.optJSONObject("u")
+        panelConv = convId
+        panelUser = u
+        titleView?.text = u?.optString("fullName", "")?.takeIf { it.isNotBlank() } ?: u?.optString("username", "Chat") ?: "Chat"
+        backBtn?.visibility = View.VISIBLE
+        headAvatar?.let { setAvatar(it, u?.optString("avatarUrl", "")?.takeIf { s -> s.isNotEmpty() && s != "null" }, 34) }
+        listScroll?.visibility = View.GONE
+        threadScroll?.visibility = View.VISIBLE
+        composer?.visibility = View.VISIBLE
+        setFocusable(true)
+        lastThreadSig = ""
+        publishPanel()
+        renderThread(forceBottom = true)
+    }
+
+    private fun findConv(id: String): JSONObject? {
+        try {
+            val arr = JSONArray(prefs.getString("flutter.bubble_convs", "[]") ?: "[]")
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                if (o.optString("id") == id) return o
+            }
+        } catch (_: Exception) {}
+        return null
+    }
+
+    private fun openChatInApp() {
+        val conv = panelConv
+        val payload = if (conv != null) {
+            JSONObject().put("k", "msg").put("c", conv).put("u", panelUser ?: JSONObject()).toString()
+        } else null
+        closePanel()
+        openApp(payload)
+    }
+
+    // ---- the chat list
+    private fun renderList() {
+        val box = listBox ?: return
+        val raw = prefs.getString("flutter.bubble_convs", "[]") ?: "[]"
+        if (raw == lastListRaw && box.childCount > 0) return
+        lastListRaw = raw
+        val arr = try { JSONArray(raw) } catch (_: Exception) { JSONArray() }
+        box.removeAllViews()
+        if (arr.length() == 0) {
+            box.addView(emptyText("No chats yet.\nStart one from someone's profile in the app."))
+            return
+        }
+        for (i in 0 until arr.length()) box.addView(chatRow(arr.getJSONObject(i)))
+    }
+
+    private fun chatRow(o: JSONObject): View {
+        val unread = o.optInt("unread", 0)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            isClickable = true
+            setOnClickListener { openThread(o.optString("id"), o.optJSONObject("u")) }
+        }
+        val av = circleAvatar(46)
+        setAvatar(av, o.optString("avatar", "").takeIf { it.isNotEmpty() && it != "null" }, 46)
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12); marginEnd = dp(8) }
+        }
+        col.addView(label(o.optString("name", ""), 14.5f, ink, bold = true).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        col.addView(label(o.optString("last", ""), 13f, if (unread > 0) ink else inkSoft, bold = unread > 0).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        row.addView(av)
+        row.addView(col)
+        if (unread > 0) {
+            row.addView(label(if (unread > 99) "99+" else unread.toString(), 11f, 0xFFFFFFFF.toInt(), bold = true).apply {
+                gravity = Gravity.CENTER
+                minWidth = dp(20)
+                setPadding(dp(6), dp(1), dp(6), dp(1))
+                background = rounded(rose, 10)
+            })
+        }
+        return row
+    }
+
+    // ---- a conversation
+    private fun doSend() {
+        val conv = panelConv ?: return
+        val et = input ?: return
+        val body = et.text.toString().trim()
+        if (body.isEmpty()) return
+        et.setText("")
+        val cid = System.currentTimeMillis().toString(36) + (0..999).random()
+        pending.add(Pending(cid, conv, body, System.currentTimeMillis()))
+        enqueue(conv, body, cid)
+        renderThread(forceBottom = true)
+    }
+
+    private fun messageRow(body: String, mine: Boolean, deleted: Boolean, faded: Boolean): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = if (mine) Gravity.END else Gravity.START
+            setPadding(dp(10), dp(2), dp(10), dp(2))
+        }
+        val tv = label(if (deleted) "Message removed" else body, 14.5f, ink).apply {
+            maxWidth = (panelWidth() * 0.75f).toInt()
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = rounded(if (mine) honey else sunken, 18)
+            if (deleted) setTypeface(typeface, Typeface.ITALIC)
+            if (faded) alpha = 0.55f
+        }
+        row.addView(tv)
+        return row
+    }
+
+    private fun renderThread(forceBottom: Boolean = false) {
+        val conv = panelConv ?: return
+        val box = threadBox ?: return
+        val sv = threadScroll ?: return
+        val j = try { JSONObject(prefs.getString("flutter.bubble_thread", "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+        val current = j.optString("conv") == conv
+
+        val acked = HashSet<String>()
+        val failed = HashSet<String>()
+        j.optJSONArray("acked")?.let { for (i in 0 until it.length()) acked.add(it.optString(i)) }
+        j.optJSONArray("failed")?.let { for (i in 0 until it.length()) failed.add(it.optString(i)) }
+        if (current) pending.removeAll { it.conv == conv && it.cid in acked }
+        val bad = pending.filter { it.cid in failed }
+        val old = pending.filter { System.currentTimeMillis() - it.at > 45_000 }
+        if (bad.isNotEmpty() || old.isNotEmpty()) {
+            pending.removeAll(bad.toSet() + old.toSet())
+            Toast.makeText(applicationContext, "Message not sent. Check your connection.", Toast.LENGTH_SHORT).show()
+        }
+        val mine = pending.filter { it.conv == conv }
+
+        val msgs = if (current) (j.optJSONArray("messages") ?: JSONArray()) else JSONArray()
+        val sig = StringBuilder().append(current).append('|')
+        for (i in 0 until msgs.length()) {
+            val m = msgs.getJSONObject(i)
+            sig.append(m.optString("id")).append(m.optBoolean("deleted")).append(',')
+        }
+        mine.forEach { sig.append(it.cid).append(',') }
+        if (sig.toString() == lastThreadSig && !forceBottom) return
+        lastThreadSig = sig.toString()
+
+        val child = sv.getChildAt(0)
+        val wasAtBottom = box.childCount == 0 || (child.height - (sv.height + sv.scrollY)) < dp(80)
+        box.removeAllViews()
+        if (!current && mine.isEmpty()) {
+            box.addView(emptyText("Loading…"))
+            return
+        }
+        if (msgs.length() == 0 && mine.isEmpty()) {
+            box.addView(emptyText("No messages yet. Say hello!"))
+            return
+        }
+        for (i in 0 until msgs.length()) {
+            val m = msgs.getJSONObject(i)
+            box.addView(messageRow(m.optString("body"), m.optBoolean("mine"), m.optBoolean("deleted"), false))
+        }
+        for (p in mine) box.addView(messageRow(p.body, true, false, true))
+        if (wasAtBottom || forceBottom) sv.post { sv.scrollTo(0, sv.getChildAt(0).height) }
+    }
+
     private fun removeViews() {
+        closePanelNow()
         dropPreview()
         closeView?.let { try { wm.removeView(it) } catch (_: Exception) {} }
         closeView = null

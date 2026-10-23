@@ -91,12 +91,34 @@ class Bubble {
   }
 
   // ---- feeding the bubble (runs in the background listener)
-  static Future<void> publish({required int unread, Map<String, dynamic>? head, Map<String, dynamic>? preview, String? latest}) async {
+  static Future<void> publish({
+    required int unread,
+    Map<String, dynamic>? head,
+    Map<String, dynamic>? preview,
+    String? latest,
+    List<Map<String, dynamic>>? convs,
+  }) async {
     final p = await SharedPreferences.getInstance();
+    if (convs != null) await p.setString('bubble_convs', jsonEncode(convs));
     await p.setString('bubble_head', jsonEncode(head ?? const {}));
     await p.setString('bubble_latest', latest ?? '');
     if (preview != null) await p.setString('bubble_preview', jsonEncode(preview));
     await p.setInt('bubble_unread', unread);
+  }
+
+  // ---- the bubble's pop-up chat window (drawn natively, see BubbleService)
+
+  /// The chat list shown in the window.
+  static Future<void> publishConvs(List<Map<String, dynamic>> convs) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('bubble_convs', jsonEncode(convs));
+  }
+
+  /// The open conversation: its latest messages, plus which of the messages the
+  /// window sent have gone through (`acked`) or not (`failed`).
+  static Future<void> publishThread(Map<String, dynamic> thread) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('bubble_thread', jsonEncode(thread));
   }
 
   static Future<bool> listenerEnabled() async {

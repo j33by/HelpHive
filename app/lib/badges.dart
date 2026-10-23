@@ -38,7 +38,7 @@ const badgeTiers = <BadgeTier>[
   BadgeTier(
     key: 'helping_wing',
     name: 'Helping Wing',
-    min: 5,
+    min: 3,
     quote: 'Small help, big difference.',
     light: Color(0xFFF3F5F8),
     dark: Color(0xFF8E9AA8),
@@ -47,7 +47,7 @@ const badgeTiers = <BadgeTier>[
   BadgeTier(
     key: 'worker_bee',
     name: 'Worker Bee',
-    min: 20,
+    min: 5,
     quote: 'Busy wings keep the hive humming.',
     light: Color(0xFFFFE27A),
     dark: Color(0xFFE3A112),
@@ -56,7 +56,7 @@ const badgeTiers = <BadgeTier>[
   BadgeTier(
     key: 'honey_maker',
     name: 'Honey Maker',
-    min: 50,
+    min: 10,
     quote: 'Kindness tastes sweetest when shared.',
     light: Color(0xFFFFC46B),
     dark: Color(0xFFD9650F),
@@ -65,7 +65,7 @@ const badgeTiers = <BadgeTier>[
   BadgeTier(
     key: 'hive_guardian',
     name: 'Hive Guardian',
-    min: 100,
+    min: 25,
     quote: 'Strong hives are built by steady hands.',
     light: Color(0xFF86E8B2),
     dark: Color(0xFF1B9560),
@@ -74,7 +74,7 @@ const badgeTiers = <BadgeTier>[
   BadgeTier(
     key: 'nectar_hero',
     name: 'Nectar Hero',
-    min: 500,
+    min: 50,
     quote: 'Your help is worth its weight in honey.',
     light: Color(0xFF9CCDFF),
     dark: Color(0xFF2860CC),
@@ -83,7 +83,7 @@ const badgeTiers = <BadgeTier>[
   BadgeTier(
     key: 'queen_bee',
     name: 'Queen Bee',
-    min: 1000,
+    min: 100,
     quote: 'The whole hive thrives because of you.',
     light: Color(0xFFE2B8FF),
     dark: Color(0xFF7430C4),
