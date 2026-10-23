@@ -240,7 +240,8 @@ class _Listener {
       // the window refreshes "ts" every few seconds; an old one means it is gone
       final open = st != null && st['open'] == true && DateTime.now().millisecondsSinceEpoch - ts < 20000;
       _panelActive = open;
-      _panelConv = open ? st?['conv'] as String? : null;
+      final convRaw = st?['conv'];
+      _panelConv = open && convRaw is String ? convRaw : null;
       if (!open) {
         _fetchedConv = null;
         return;
