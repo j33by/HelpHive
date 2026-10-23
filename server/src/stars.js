@@ -8,12 +8,12 @@ import { query } from './db.js';
  */
 export const TIERS = [
   { key: 'fresh_buzz', min: 1 },
-  { key: 'helping_wing', min: 5 },
-  { key: 'worker_bee', min: 20 },
-  { key: 'honey_maker', min: 50 },
-  { key: 'hive_guardian', min: 100 },
-  { key: 'nectar_hero', min: 500 },
-  { key: 'queen_bee', min: 1000 },
+  { key: 'helping_wing', min: 3 },
+  { key: 'worker_bee', min: 5 },
+  { key: 'honey_maker', min: 10 },
+  { key: 'hive_guardian', min: 25 },
+  { key: 'nectar_hero', min: 50 },
+  { key: 'queen_bee', min: 100 },
 ];
 
 export function badgeKey(stars) {
