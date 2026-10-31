@@ -11,6 +11,7 @@ import 'badge.dart';
 import 'clay.dart';
 import 'reactions.dart';
 import '../layout.dart';
+import '../screens/standing.dart';
 
 class CategoryTag extends StatelessWidget {
   const CategoryTag(this.category, {super.key});
@@ -111,6 +112,8 @@ class _PostCardState extends State<PostCard> {
 
   Future<void> _menu(String v) async {
     switch (v) {
+      case 'report':
+        await showReportSheet(context, type: 'post', id: p.id);
       case 'edit':
         final changed = await Navigator.push<bool>(context, appRoute(ComposeScreen(editing: p)));
         if (changed == true) {
@@ -166,6 +169,17 @@ class _PostCardState extends State<PostCard> {
               ]),
             ),
           ),
+          if (!mine)
+            PopupMenuButton<String>(
+              onSelected: _menu,
+              color: C.surface,
+              surfaceTintColor: Colors.transparent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              icon: const HIcon('more', size: 22, color: C.inkSoft),
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'report', child: Text('Report post', style: TextStyle(fontWeight: FontWeight.w700))),
+              ],
+            ),
           if (mine)
             PopupMenuButton<String>(
               onSelected: _menu,

@@ -8,6 +8,7 @@ import 'config.dart';
 import 'platform.dart';
 import 'screens/auth.dart';
 import 'screens/shell.dart';
+import 'screens/standing.dart';
 import 'services/alerts.dart';
 import 'services/secure_store.dart';
 import 'theme.dart';
@@ -100,7 +101,18 @@ class _GateState extends State<Gate> {
   Widget build(BuildContext context) {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 250),
-      child: _session == null ? const AuthScreen(key: ValueKey('auth')) : const Shell(key: ValueKey('shell')),
+      child: _session == null
+          ? const AuthScreen(key: ValueKey('auth'))
+          : ListenableBuilder(
+              key: const ValueKey('session'),
+              listenable: AppState.I,
+              builder: (context, _) {
+                final app = AppState.I;
+                // wait briefly for the standing check so a banned account never flashes the feed
+                if (!app.standingReady) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+                return app.standing.banned ? const BannedScreen() : const Shell();
+              },
+            ),
     );
   }
 }

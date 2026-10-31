@@ -5,6 +5,7 @@ import '../services/data.dart';
 import '../theme.dart';
 import '../widgets/clay.dart';
 import '../widgets/post_card.dart';
+import '../widgets/announcement_card.dart';
 import 'compose.dart';
 import 'search.dart';
 import '../layout.dart';
@@ -18,6 +19,7 @@ class FeedTab extends StatefulWidget {
 class _FeedTabState extends State<FeedTab> {
   final _scroll = ScrollController();
   final List<Post> _posts = [];
+  List<Announcement> _announcements = [];
   String? _category;
   bool _loading = true;
   bool _more = false;
@@ -45,6 +47,10 @@ class _FeedTabState extends State<FeedTab> {
       _error = null;
     });
     try {
+      // team announcements ride along; if they fail the feed is still shown
+      Data.announcements().then((a) {
+        if (mounted) setState(() => _announcements = a);
+      }).catchError((_) {});
       final page = await Data.feed(category: _category);
       if (!mounted) return;
       setState(() {
@@ -165,6 +171,15 @@ class _FeedTabState extends State<FeedTab> {
                 ]),
               ),
             ),
+            if (_announcements.isNotEmpty && _category == null)
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                sliver: SliverList.separated(
+                  itemCount: _announcements.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (_, i) => AnnouncementCard(item: _announcements[i]),
+                ),
+              ),
             if (_loading)
               const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator()))
             else if (_error != null && _posts.isEmpty)

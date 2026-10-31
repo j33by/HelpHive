@@ -7,6 +7,7 @@ import '../widgets/clay.dart';
 import 'feed.dart';
 import 'messages.dart';
 import 'notifications.dart';
+import 'standing.dart';
 import 'people.dart';
 import 'profile.dart';
 
@@ -59,7 +60,13 @@ class _ShellState extends State<Shell> {
             toast(context, 'Press back again to leave');
           },
           child: Scaffold(
-            body: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            body: Column(children: [
+              const StandingBanner(),
+              Expanded(
+                child: MediaQuery.removePadding(
+                  context: context,
+                  removeTop: _app.standing.restricted,
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               if (wide)
                 _Sidebar(
                   tabs: _tabs,
@@ -76,6 +83,9 @@ class _ShellState extends State<Shell> {
                   ContentColumn(maxWidth: 1240, child: MessagesTab()),
                   ProfileScreen(),
                 ]),
+              ),
+            ]),
+                ),
               ),
             ]),
             bottomNavigationBar: wide

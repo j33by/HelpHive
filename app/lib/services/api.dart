@@ -183,6 +183,24 @@ class Api {
     return (notifications: (r['notifications'] as num).toInt(), messages: (r['messages'] as num).toInt());
   }
 
+  // account standing, appeals, reports
+  static String get _platform => Platform.isWindows ? 'windows' : Platform.isAndroid ? 'android' : Platform.isIOS ? 'ios' : Platform.isMacOS ? 'macos' : 'linux';
+
+  static Future<Standing> standing({bool launch = false}) async {
+    final r = await _send('GET', '/me/standing', query: launch ? {'launch': '1', 'platform': _platform} : null) as Map<String, dynamic>;
+    return Standing.fromJson(r);
+  }
+
+  static Future<void> appeal(String message) => _send('POST', '/me/appeal', body: {'message': message});
+
+  static Future<void> report({required String type, required String id, required String reason, String? details}) =>
+      _send('POST', '/reports', body: {
+        'targetType': type,
+        'targetId': id,
+        'reason': reason,
+        if (details != null && details.trim().isNotEmpty) 'details': details.trim(),
+      });
+
   static Future<void> readAllNotifications() => _send('POST', '/notifications/read');
   static Future<void> readNotification(String id) => _send('POST', '/notifications/$id/read');
   static Future<void> deleteNotification(String id) => _send('DELETE', '/notifications/$id');

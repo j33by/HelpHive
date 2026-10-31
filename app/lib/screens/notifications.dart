@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../widgets/clay.dart';
 import '../widgets/reactions.dart';
 import 'post_detail.dart';
+import 'standing.dart';
 import 'profile.dart';
 import '../layout.dart';
 
@@ -122,11 +123,52 @@ class _NotificationsTabState extends State<NotificationsTab> {
     }
   }
 
+  static const _modTitles = {
+    'mod_warn': 'Warning from the HelpHive team',
+    'mod_restrict': 'Your account was restricted',
+    'mod_unrestrict': 'Restriction lifted',
+    'mod_ban': 'Your account was banned',
+    'mod_unban': 'Account reinstated',
+    'mod_strike': 'You received a strike',
+    'mod_remove_strike': 'A strike was removed',
+    'mod_delete_post': 'One of your posts was removed',
+    'mod_delete_comment': 'One of your comments was removed',
+    'mod_email_change': 'Your email was changed',
+    'mod_password_change': 'Your password was changed',
+    'mod_revert': 'An action on your account was reversed',
+    'mod_notice': 'Announcement',
+  };
+
+  void _openNotice(Notif n) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(_modTitles[n.type] ?? 'Message from HelpHive', style: const TextStyle(fontWeight: FontWeight.w800)),
+        content: SingleChildScrollView(child: Text(n.message ?? n.snippet ?? '', style: const TextStyle(height: 1.45))),
+        actions: [
+          if (n.type == 'mod_restrict' || n.type == 'mod_strike' || n.type == 'mod_warn')
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                showStandingSheet(context);
+              },
+              child: const Text('Account standing', style: TextStyle(color: C.inkSoft)),
+            ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK', style: TextStyle(color: C.honeyDeep, fontWeight: FontWeight.w800))),
+        ],
+      ),
+    );
+  }
+
   void _open(Notif n) {
     if (!n.read) {
       n.read = true;
       Api.readNotification(n.id).catchError((_) {});
       setState(() {});
+    }
+    if (n.type.startsWith('mod_')) {
+      _openNotice(n);
+      return;
     }
     if (n.type.startsWith('friend') && n.actor.id.isNotEmpty) {
       Navigator.push(context, appRoute(ProfileScreen(userId: n.actor.id)));
@@ -255,11 +297,19 @@ class _NotificationsTabState extends State<NotificationsTab> {
                                       const SizedBox(width: 12),
                                       Expanded(
                                         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                          Text.rich(TextSpan(children: [
-                                            TextSpan(text: n.actor.display, style: const TextStyle(fontWeight: FontWeight.w800)),
-                                            TextSpan(text: ' $what'),
-                                          ]), style: const TextStyle(height: 1.3, fontSize: 14.5)),
-                                          if (quote != null)
+                                          if (n.type.startsWith('mod_'))
+                                            Text(_modTitles[n.type] ?? 'HelpHive team', style: const TextStyle(fontWeight: FontWeight.w800, height: 1.3, fontSize: 14.5))
+                                          else
+                                            Text.rich(TextSpan(children: [
+                                              TextSpan(text: n.actor.display, style: const TextStyle(fontWeight: FontWeight.w800)),
+                                              TextSpan(text: ' $what'),
+                                            ]), style: const TextStyle(height: 1.3, fontSize: 14.5)),
+                                          if (n.type.startsWith('mod_') && (n.message ?? n.snippet) != null)
+                                            Padding(
+                                              padding: const EdgeInsets.only(top: 4),
+                                              child: Text((n.message ?? n.snippet)!, maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(color: C.inkSoft, fontSize: 13.5, height: 1.35)),
+                                            ),
+                                          if (quote != null && !n.type.startsWith('mod_'))
                                             Padding(
                                               padding: const EdgeInsets.only(top: 4),
                                               child: Text(quote, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: C.inkSoft, fontSize: 13.5)),

@@ -371,12 +371,15 @@ class Notif {
     this.postId,
     this.commentId,
     this.snippet,
+    this.message,
     required this.read,
     required this.createdAt,
   });
   final String id;
   final String type;
   final UserLite actor;
+  /// Full text of a notice from the HelpHive team (moderation, announcements).
+  final String? message;
   final String? postId;
   final String? commentId;
   final String? snippet;
@@ -390,7 +393,102 @@ class Notif {
         postId: j['postId'] as String?,
         commentId: j['commentId'] as String?,
         snippet: j['snippet'] as String?,
+        message: j['message'] as String?,
         read: j['read'] as bool? ?? false,
         createdAt: _t(j['createdAt']),
+      );
+}
+
+
+/// Standing of the signed-in account, as decided by the HelpHive team.
+class StandingEvent {
+  StandingEvent({required this.label, required this.reason, required this.createdAt});
+  final String label;
+  final String reason;
+  final DateTime createdAt;
+  factory StandingEvent.fromJson(Map<String, dynamic> j) => StandingEvent(
+        label: j['label'] as String? ?? (j['type'] as String? ?? ''),
+        reason: j['reason'] as String? ?? '',
+        createdAt: _t(j['createdAt']),
+      );
+}
+
+class StandingAppeal {
+  StandingAppeal({required this.status, required this.message, this.decisionReason});
+  final String status; // pending | approved | denied
+  final String message;
+  final String? decisionReason;
+  factory StandingAppeal.fromJson(Map<String, dynamic> j) => StandingAppeal(
+        status: j['status'] as String? ?? 'pending',
+        message: j['message'] as String? ?? '',
+        decisionReason: j['decisionReason'] as String?,
+      );
+}
+
+class Standing {
+  Standing({
+    this.status = 'active',
+    this.until,
+    this.reason,
+    this.strikes = 0,
+    this.strikeLimit,
+    this.history = const [],
+    this.appeal,
+    this.canAppeal = false,
+  });
+  final String status; // active | restricted | banned
+  final DateTime? until;
+  final String? reason;
+  final int strikes;
+  final int? strikeLimit;
+  final List<StandingEvent> history;
+  final StandingAppeal? appeal;
+  final bool canAppeal;
+
+  bool get banned => status == 'banned';
+  bool get restricted => status == 'restricted' && until != null && until!.isAfter(DateTime.now());
+
+  factory Standing.fromJson(Map<String, dynamic> j) => Standing(
+        status: j['status'] as String? ?? 'active',
+        until: j['until'] == null ? null : _t(j['until']),
+        reason: j['reason'] as String?,
+        strikes: (j['strikes'] as num?)?.toInt() ?? 0,
+        strikeLimit: (j['strikeLimit'] as num?)?.toInt(),
+        history: ((j['history'] as List?) ?? const []).map((e) => StandingEvent.fromJson(e as Map<String, dynamic>)).toList(),
+        appeal: j['appeal'] == null ? null : StandingAppeal.fromJson(j['appeal'] as Map<String, dynamic>),
+        canAppeal: j['canAppeal'] as bool? ?? false,
+      );
+}
+
+/// An update or event the HelpHive team posts to everyone's feed.
+class Announcement {
+  Announcement({
+    required this.id,
+    required this.kind,
+    required this.title,
+    required this.body,
+    this.eventAt,
+    this.location,
+    required this.pinned,
+    required this.createdAt,
+  });
+  final String id;
+  final String kind; // update | event | alert
+  final String title;
+  final String body;
+  final DateTime? eventAt;
+  final String? location;
+  final bool pinned;
+  final DateTime createdAt;
+
+  factory Announcement.fromRow(Map<String, dynamic> j) => Announcement(
+        id: j['id'] as String,
+        kind: j['kind'] as String? ?? 'update',
+        title: j['title'] as String? ?? '',
+        body: j['body'] as String? ?? '',
+        eventAt: j['event_at'] == null ? null : _t(j['event_at']),
+        location: j['location'] as String?,
+        pinned: j['pinned'] as bool? ?? false,
+        createdAt: _t(j['created_at']),
       );
 }

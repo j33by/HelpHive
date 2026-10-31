@@ -48,6 +48,17 @@ class Data {
 
   static String? _postUrl(String path) => sb.storage.from('posts').getPublicUrl(path);
 
+  // ---- announcements from the HelpHive team (read-only for everyone else)
+  static Future<List<Announcement>> announcements() async {
+    final rows = await sb
+        .from('announcements')
+        .select()
+        .order('pinned', ascending: false)
+        .order('created_at', ascending: false)
+        .limit(5) as List;
+    return rows.map((r) => Announcement.fromRow(r as Map<String, dynamic>)).toList();
+  }
+
   // ---- posts
   static Future<PostsPage> feed({DateTime? before, String? author, String? search, String? category}) async {
     final rows = await sb.rpc('get_feed', params: {
