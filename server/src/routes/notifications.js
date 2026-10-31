@@ -2,16 +2,19 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db.js';
 import { loadProfiles } from '../supabase.js';
-import { ah, cursor, parse, uuid } from '../util.js';
+import { ah, cursor, parse, SYSTEM_ACTOR, uuid } from '../util.js';
 
 const router = Router();
+
+// Notices from the admins come from a fixed system actor that has no profile.
+const SYSTEM_USER = { id: SYSTEM_ACTOR, username: 'helphive', fullName: 'HelpHive Team', avatarUrl: null };
 
 const PAGE = 30;
 
 router.get('/notifications', ah(async (req, res) => {
   const { before } = parse(z.object({ before: cursor }), req.query);
   const { rows } = await query(
-    `select id, actor_id, type, post_id, comment_id, snippet, read_at, created_at
+    `select id, actor_id, type, post_id, comment_id, snippet, message, meta, read_at, created_at
        from notifications
       where user_id = $1 and ($2::timestamptz is null or created_at < $2::timestamptz)
       order by created_at desc
@@ -19,16 +22,18 @@ router.get('/notifications', ah(async (req, res) => {
     [req.user.id, before ?? null, PAGE + 1],
   );
   const page = rows.slice(0, PAGE);
-  const users = await loadProfiles(page.map((r) => r.actor_id));
+  const users = await loadProfiles(page.map((r) => r.actor_id).filter((id) => id !== SYSTEM_ACTOR));
   res.json({
     hasMore: rows.length > PAGE,
     notifications: page.map((r) => ({
       id: r.id,
       type: r.type,
-      actor: users.get(r.actor_id),
+      actor: r.actor_id === SYSTEM_ACTOR ? SYSTEM_USER : users.get(r.actor_id),
       postId: r.post_id,
       commentId: r.comment_id,
       snippet: r.snippet,
+      message: r.message ?? null,
+      meta: r.meta ?? null,
       read: r.read_at !== null,
       createdAt: r.created_at,
     })),

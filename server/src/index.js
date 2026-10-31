@@ -11,20 +11,32 @@ import notifications from './routes/notifications.js';
 import events from './routes/events.js';
 import account from './routes/account.js';
 import stars from './routes/stars.js';
+import me from './routes/me.js';
+import adminApi from './admin/index.js';
+import { bootstrapOwner } from './admin/auth.js';
+import { enforceStanding } from './standing.js';
+import { trackPresence } from './presence.js';
 
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Render terminates TLS in front of us
 app.use(helmet());
-app.use(express.json({ limit: '16kb' }));
 
 // Unauthenticated, only so the app can wake a sleeping free-tier instance.
 app.get('/health', (_req, res) => res.json({ ok: true }));
+
+// The admin app has its own sign-in, parser and limits (see admin/index.js).
+app.use('/admin', adminApi);
+
+app.use(express.json({ limit: '16kb' }));
 
 // Cheap per-IP ceiling before any token work happens.
 app.use(rateLimit({ windowMs: 10 * 60_000, limit: 800, standardHeaders: true, legacyHeaders: false }));
 
 app.use(requireAuth);
+// Banned and restricted accounts are stopped here; everyone else is counted as active.
+app.use(enforceStanding);
+app.use(trackPresence);
 
 // Writes are limited per signed-in user.
 const writes = rateLimit({
@@ -43,6 +55,7 @@ app.use(notifications);
 app.use(events);
 app.use(account);
 app.use(stars);
+app.use(me);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found.' }));
 
@@ -55,7 +68,10 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Something went wrong on our side.' });
 });
 
-const server = app.listen(config.port, () => console.log(`HelpHive API listening on :${config.port}`));
+const server = app.listen(config.port, () => {
+  console.log(`HelpHive API listening on :${config.port}`);
+  bootstrapOwner();
+});
 
 function shutdown() {
   server.close(() => pool.end().finally(() => process.exit(0)));

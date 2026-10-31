@@ -37,3 +37,6 @@ export function parse(schema, data) {
 }
 
 export const iso = (v) => (v instanceof Date ? v.toISOString() : v ?? null);
+
+// Fixed actor id for notices written by the admin app (no profile behind it).
+export const SYSTEM_ACTOR = '00000000-0000-0000-0000-000000000000';

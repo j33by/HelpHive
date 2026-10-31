@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "create-admin": "node scripts/create-admin.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

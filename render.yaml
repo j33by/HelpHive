@@ -20,3 +20,9 @@ services:
         sync: false
       - key: SUPABASE_JWT_SECRET     # only if your project still uses the legacy HS256 secret
         sync: false
+      - key: ADMIN_JWT_SECRET        # long random string; leave empty to keep the admin API off
+        sync: false
+      - key: ADMIN_BOOTSTRAP_EMAIL   # optional: first owner, created only while there are no admins
+        sync: false
+      - key: ADMIN_BOOTSTRAP_PASSWORD
+        sync: false
