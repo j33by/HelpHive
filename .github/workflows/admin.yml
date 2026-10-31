@@ -1,0 +1,25 @@
+name: HelpHive Admin (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['admin/**']
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helphive-admin-windows
+          path: |
+            admin/dist/*.exe
