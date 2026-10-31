@@ -1,0 +1,40 @@
+name: Build HelpHive Admin (Windows)
+
+# Use this file when the admin/ folder is its own repository (this file sits at the repo root's .github/workflows).
+# If admin/ stays inside the main HelpHive repo, use the copy in the repo root: .github/workflows/admin.yml
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm install
+
+      - name: Build installer and portable exe
+        run: npm run dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helphive-admin-windows
+          path: dist/*.exe
+
+      - name: Attach to the release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.exe
