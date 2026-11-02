@@ -1,6 +1,6 @@
 {
   "name": "helphive-server",
-  "version": "1.0.0",
+  "version": "1.0.8",
   "description": "HelpHive API: comments, messages and notifications on Neon, guarded by Supabase sessions",
   "private": true,
   "type": "module",
