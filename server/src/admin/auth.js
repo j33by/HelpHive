@@ -51,7 +51,7 @@ const MODERATOR = [
 ];
 const ADMIN = [
   ...MODERATOR, 'ban', 'unban', 'account.email', 'account.password', 'account.delete',
-  'announce', 'appeals', 'control.all', 'logs', 'system',
+  'announce', 'appeals', 'control.all', 'logs', 'system', 'release',
 ];
 const OWNER = [...ADMIN, 'team', 'settings'];
 

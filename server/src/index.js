@@ -12,6 +12,7 @@ import events from './routes/events.js';
 import account from './routes/account.js';
 import stars from './routes/stars.js';
 import me from './routes/me.js';
+import { getSettings } from './admin/settings.js';
 import adminApi from './admin/index.js';
 import { bootstrapOwner } from './admin/auth.js';
 import { enforceStanding } from './standing.js';
@@ -32,6 +33,19 @@ app.use(express.json({ limit: '16kb' }));
 
 // Cheap per-IP ceiling before any token work happens.
 app.use(rateLimit({ windowMs: 10 * 60_000, limit: 800, standardHeaders: true, legacyHeaders: false }));
+
+// Public on purpose: apps ask this before and after sign-in. Nothing private in it.
+app.get('/app-version', async (_req, res) => {
+  try {
+    const { appRelease: a } = await getSettings();
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json(a.enabled && a.latestVersion
+      ? { latestVersion: a.latestVersion, notes: a.notes ?? '', downloadUrl: a.downloadUrl }
+      : { latestVersion: null });
+  } catch {
+    res.json({ latestVersion: null });
+  }
+});
 
 app.use(requireAuth);
 // Banned and restricted accounts are stopped here; everyone else is counted as active.

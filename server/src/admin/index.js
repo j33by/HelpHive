@@ -10,6 +10,7 @@ import control from './routes/control.js';
 import logs from './routes/logs.js';
 import inbox from './routes/inbox.js';
 import team from './routes/team.js';
+import release from './routes/release.js';
 
 /**
  * Everything under /admin. It has its own sign-in (admins are not Supabase users),
@@ -27,7 +28,7 @@ router.use(rateLimit({
   skip: (req) => req.method === 'GET',
   message: { error: 'Slow down: too many changes in a minute.' },
 }));
-for (const sub of [dashboard, users, content, announcements, control, logs, inbox, team]) router.use(sub);
+for (const sub of [dashboard, users, content, announcements, control, logs, inbox, team, release]) router.use(sub);
 router.use((_req, _res, next) => next(new HttpError(404, 'Not found.')));
 
 export default router;

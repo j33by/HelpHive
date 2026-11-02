@@ -72,6 +72,8 @@ export const DEFAULTS = {
   notifyRestricted: false,    // send notices to people who are restricted at that moment
   sessionIdleMinutes: 30,
   templates: DEFAULT_TEMPLATES,
+  // what the apps compare themselves against; empty latestVersion = never ask anyone to update
+  appRelease: { latestVersion: '', notes: '', downloadUrl: 'https://helphive.freedev.app', enabled: true, updatedAt: null, updatedBy: null },
 };
 
 let cache = { at: 0, value: DEFAULTS };
